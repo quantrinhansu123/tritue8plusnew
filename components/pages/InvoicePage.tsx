@@ -107,6 +107,7 @@ interface StudentInvoice {
   sessions: AttendanceSession[];
   invoiceImage?: string; // Base64 image data
   // Class information
+  classId?: string;
   className?: string;
   classCode?: string;
   subject?: string;
