@@ -13,7 +13,7 @@ import {
   Card,
 } from "antd";
 import { PlusOutlined, DeleteOutlined, EditOutlined, PrinterOutlined } from "@ant-design/icons";
-import { ref, update } from "firebase/database";
+import { ref, update, get } from "firebase/database";
 import { database } from "../firebase";
 import { AttendanceSession, ScoreDetail } from "../types";
 import dayjs from "dayjs";
@@ -43,51 +43,45 @@ const ScoreDetailModal = ({
         (r) => r["Student ID"] === studentId
       );
       
-      // Get manually added scores
+      // Get manually added scores from CURRENT SESSION ONLY
+      // Only show scores that belong to this specific session/class
       const manualScores = studentRecord?.["Chi tiết điểm"] || [];
       
-      // Get test scores from session history - fetch all sessions for this student
-      const fetchSessionScores = async () => {
-        try {
-          const response = await fetch(
-            `https://trituehocsinh-default-rtdb.firebaseio.com/datasheet/Điểm_danh_sessions.json`
-          );
-          const data = await response.json();
-          
-          if (data) {
-            const allSessions = Object.keys(data).map((key) => ({
-              id: key,
-              ...data[key],
-            }));
-            
-            // Filter sessions where this student has test scores
-            const testScores: ScoreDetail[] = [];
-            allSessions.forEach((sess) => {
-              const record = sess["Điểm danh"]?.find(
-                (r: any) => r["Student ID"] === studentId
-              );
-              
-              if (record && record["Bài kiểm tra"] && record["Điểm kiểm tra"] != null) {
-                testScores.push({
-                  "Tên điểm": record["Bài kiểm tra"],
-                  "Điểm": record["Điểm kiểm tra"],
-                  "Ngày": sess["Ngày"],
-                  "Ghi chú": `Từ buổi học: ${sess["Tên lớp"]} - ${dayjs(sess["Ngày"]).format("DD/MM/YYYY")}`,
-                });
-              }
-            });
-            
-            // Combine manual scores and test scores (remove duplicates)
-            const combinedScores = [...testScores, ...manualScores];
-            setScores(combinedScores);
+      // Filter and add sessionId/classId to scores from current session
+      // Only include scores that either:
+      // 1. Don't have Session ID (old data, assume belongs to current session)
+      // 2. Have Session ID matching current session
+      const manualScoresWithSession = manualScores
+        .filter((score: ScoreDetail) => {
+          // If score has Session ID, only include if it matches current session
+          if (score["Session ID"]) {
+            return score["Session ID"] === session.id;
           }
-        } catch (error) {
-          console.error("Error fetching session scores:", error);
-          setScores(manualScores);
-        }
-      };
+          // If no Session ID, assume it belongs to current session (old data)
+          return true;
+        })
+        .map((score: ScoreDetail) => ({
+          ...score,
+          "Session ID": score["Session ID"] || session.id,
+          "Class ID": score["Class ID"] || session["Class ID"],
+        }));
       
-      fetchSessionScores();
+      // Get test score from current session only (if exists)
+      const currentSessionTestScore: ScoreDetail[] = [];
+      if (studentRecord && studentRecord["Bài kiểm tra"] && studentRecord["Điểm kiểm tra"] != null) {
+        currentSessionTestScore.push({
+          "Tên điểm": studentRecord["Bài kiểm tra"],
+          "Điểm": studentRecord["Điểm kiểm tra"],
+          "Ngày": session["Ngày"],
+          "Ghi chú": `Từ buổi học: ${session["Tên lớp"]} - ${dayjs(session["Ngày"]).format("DD/MM/YYYY")}`,
+          "Session ID": session.id,
+          "Class ID": session["Class ID"],
+        });
+      }
+      
+      // Only show scores from current session
+      const combinedScores = [...currentSessionTestScore, ...manualScoresWithSession];
+      setScores(combinedScores);
     }
   }, [session, studentId]);
 
@@ -98,33 +92,72 @@ const ScoreDetailModal = ({
         "Điểm": values.score,
         "Ngày": values.date.format("YYYY-MM-DD"),
         "Ghi chú": values.note || "",
+        "Session ID": session?.id,
+        "Class ID": session?.["Class ID"],
       };
 
+      // If editing, find the score by sessionId, classId, name and date to ensure we update the correct one
       const updatedScores = editingScore
         ? scores.map((s) =>
             s["Tên điểm"] === editingScore["Tên điểm"] &&
-            s["Ngày"] === editingScore["Ngày"]
+            s["Ngày"] === editingScore["Ngày"] &&
+            s["Session ID"] === editingScore["Session ID"] &&
+            s["Class ID"] === editingScore["Class ID"]
               ? newScore
               : s
           )
         : [...scores, newScore];
 
-      // Update in Firebase
-      if (session) {
-        const updatedAttendance = session["Điểm danh"]?.map((record) => {
+      // Only update the session that this score belongs to
+      const targetSessionId = editingScore?.["Session ID"] || session?.id;
+      const targetClassId = editingScore?.["Class ID"] || session?.["Class ID"];
+      
+      // Validate: ensure we're only updating the current session
+      if (targetSessionId !== session?.id) {
+        console.warn("⚠️ Attempting to update score from different session. Current:", session?.id, "Target:", targetSessionId);
+        message.error("Không thể sửa điểm từ môn học khác. Vui lòng mở modal từ đúng môn học.");
+        return;
+      }
+      
+      if (targetSessionId && targetClassId) {
+        // Fetch the target session
+        const sessionRef = ref(
+          database,
+          `datasheet/Điểm_danh_sessions/${targetSessionId}`
+        );
+        
+        // Get current session data
+        const snapshot = await get(sessionRef);
+        const targetSession = snapshot.val();
+        if (!targetSession) {
+          message.error("Không tìm thấy buổi học");
+          return;
+        }
+
+        // Validate Class ID matches
+        if (targetSession["Class ID"] !== targetClassId) {
+          console.warn("⚠️ Class ID mismatch. Session Class ID:", targetSession["Class ID"], "Expected:", targetClassId);
+          message.error("Lỗi: Môn học không khớp. Vui lòng thử lại.");
+          return;
+        }
+
+        // Filter scores to only include those from this session
+        const scoresForThisSession = updatedScores.filter(
+          (s) => s["Session ID"] === targetSessionId && s["Class ID"] === targetClassId
+        );
+
+        console.log("💾 Saving scores for session:", targetSessionId, "class:", targetClassId, "scores count:", scoresForThisSession.length);
+
+        const updatedAttendance = (targetSession["Điểm danh"] || []).map((record: any) => {
           if (record["Student ID"] === studentId) {
             return {
               ...record,
-              "Chi tiết điểm": updatedScores,
+              "Chi tiết điểm": scoresForThisSession,
             };
           }
           return record;
         });
 
-        const sessionRef = ref(
-          database,
-          `datasheet/Điểm_danh_sessions/${session.id}`
-        );
         await update(sessionRef, {
           "Điểm danh": updatedAttendance,
         });
@@ -142,28 +175,67 @@ const ScoreDetailModal = ({
 
   const handleDeleteScore = async (score: ScoreDetail) => {
     try {
+      // Only remove the specific score (matching by sessionId, classId, name and date)
       const updatedScores = scores.filter(
         (s) =>
           !(
-            s["Tên điểm"] === score["Tên điểm"] && s["Ngày"] === score["Ngày"]
+            s["Tên điểm"] === score["Tên điểm"] && 
+            s["Ngày"] === score["Ngày"] &&
+            s["Session ID"] === score["Session ID"] &&
+            s["Class ID"] === score["Class ID"]
           )
       );
 
-      if (session) {
-        const updatedAttendance = session["Điểm danh"]?.map((record) => {
+      // Only update the session that this score belongs to
+      const targetSessionId = score["Session ID"] || session?.id;
+      const targetClassId = score["Class ID"] || session?.["Class ID"];
+      
+      // Validate: ensure we're only updating the current session
+      if (targetSessionId !== session?.id) {
+        console.warn("⚠️ Attempting to delete score from different session. Current:", session?.id, "Target:", targetSessionId);
+        message.error("Không thể xóa điểm từ môn học khác. Vui lòng mở modal từ đúng môn học.");
+        return;
+      }
+      
+      if (targetSessionId && targetClassId) {
+        // Fetch the target session
+        const sessionRef = ref(
+          database,
+          `datasheet/Điểm_danh_sessions/${targetSessionId}`
+        );
+        
+        // Get current session data
+        const snapshot = await get(sessionRef);
+        const targetSession = snapshot.val();
+        if (!targetSession) {
+          message.error("Không tìm thấy buổi học");
+          return;
+        }
+
+        // Validate Class ID matches
+        if (targetSession["Class ID"] !== targetClassId) {
+          console.warn("⚠️ Class ID mismatch. Session Class ID:", targetSession["Class ID"], "Expected:", targetClassId);
+          message.error("Lỗi: Môn học không khớp. Vui lòng thử lại.");
+          return;
+        }
+
+        // Filter scores to only include those from this session
+        const scoresForThisSession = updatedScores.filter(
+          (s) => s["Session ID"] === targetSessionId && s["Class ID"] === targetClassId
+        );
+
+        console.log("🗑️ Deleting score from session:", targetSessionId, "class:", targetClassId, "remaining scores:", scoresForThisSession.length);
+
+        const updatedAttendance = (targetSession["Điểm danh"] || []).map((record: any) => {
           if (record["Student ID"] === studentId) {
             return {
               ...record,
-              "Chi tiết điểm": updatedScores,
+              "Chi tiết điểm": scoresForThisSession,
             };
           }
           return record;
         });
 
-        const sessionRef = ref(
-          database,
-          `datasheet/Điểm_danh_sessions/${session.id}`
-        );
         await update(sessionRef, {
           "Điểm danh": updatedAttendance,
         });

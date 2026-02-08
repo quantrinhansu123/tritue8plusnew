@@ -156,6 +156,7 @@ const InvoicePage = () => {
   const [classes, setClasses] = useState<any[]>([]);
   const [timetableEntries, setTimetableEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tuitionFees, setTuitionFees] = useState<Record<string, number | null>>({}); // Key: "Mã học sinh-Mã lớp"
 
   // Student invoice filters
   const [studentSearchTerm, setStudentSearchTerm] = useState("");
@@ -412,6 +413,22 @@ const InvoicePage = () => {
           );
         }
 
+        // Fetch tuition fees (Học_phí_riêng)
+        const tuitionRes = await fetch(
+          `${DATABASE_URL_BASE}/datasheet/Học_phí_riêng.json`
+        );
+        const tuitionData = await tuitionRes.json();
+        if (tuitionData) {
+          const tuitionMap: Record<string, number | null> = {};
+          Object.values(tuitionData).forEach((item: any) => {
+            if (item && item.studentCode && item.classCode) {
+              const key = `${item.studentCode}-${item.classCode}`;
+              tuitionMap[key] = item.tuitionFee;
+            }
+          });
+          setTuitionFees(tuitionMap);
+        }
+
         // Fetch timetable entries (Thời_khoá_biểu)
         const timetableRes = await fetch(
           `${DATABASE_URL_BASE}/datasheet/Th%E1%BB%9Di_kho%C3%A1_bi%E1%BB%83u.json`
@@ -495,9 +512,9 @@ const InvoicePage = () => {
         if (classInfo) {
           subject = classInfo["Môn học"] || "";
 
-          // Priority 1: Use student's hoc_phi_rieng for the specific subject if available
+          // Priority 1: Use student's hoc_phi_rieng for the specific class if available
           const student = students.find((s) => s.id === studentId);
-          const hocPhiRieng = getHocPhiRieng(student, subject);
+          const hocPhiRieng = getHocPhiRieng(student, classId);
           if (hocPhiRieng !== null) {
             pricePerSession = hocPhiRieng;
           } else {
@@ -1135,9 +1152,8 @@ const InvoicePage = () => {
       const student = students.find((s) => s.id === studentId);
       const classId = session["Class ID"];
       const classInfo = classes.find((c) => c.id === classId);
-      const subject = classInfo?.["Môn học"];
       
-      const hocPhiRieng = getHocPhiRieng(student, subject);
+      const hocPhiRieng = getHocPhiRieng(student, classId);
       if (hocPhiRieng !== null) {
         return hocPhiRieng;
       }
@@ -1167,32 +1183,39 @@ const InvoicePage = () => {
     return classInfo?.["Học phí mỗi buổi"] || course?.Giá || 0;
   };
 
-  // Helper function to get hoc_phi_rieng for a specific subject
-  // hoc_phi_rieng can be: a number (old format - deprecated) or an object { "Toán": 100000, "Lý": 120000 }
-  const getHocPhiRieng = (student: Student | undefined, subject?: string): number | null => {
-    if (!student || !student["hoc_phi_rieng"]) {
+  // Helper function to get hoc_phi_rieng for a specific class
+  // Key format: "Mã học sinh-Mã lớp"
+  const getHocPhiRieng = (student: Student | undefined, classId?: string): number | null => {
+    if (!student) {
       return null;
     }
 
-    const hocPhiRieng = student["hoc_phi_rieng"];
-    
-    // If it's an object (new format), get the price for the specific subject
-    if (typeof hocPhiRieng === "object" && hocPhiRieng !== null && !Array.isArray(hocPhiRieng)) {
-      if (subject && hocPhiRieng[subject]) {
-        return hocPhiRieng[subject];
-      }
-      return null; // No hoc_phi_rieng for this specific subject
+    // Get class info to get class code
+    if (!classId) {
+      return null;
     }
-    
-    // Old format (number) - deprecated, return null to not use it
-    return null;
+
+    const classInfo = classes.find((c) => c.id === classId);
+    if (!classInfo) {
+      return null;
+    }
+
+    const studentCode = student["Mã học sinh"] || "";
+    const classCode = classInfo["Mã lớp"] || "";
+    if (!studentCode || !classCode) {
+      return null;
+    }
+
+    // Look up in tuition fees table with key: "Mã học sinh-Mã lớp"
+    const tuitionKey = `${studentCode}-${classCode}`;
+    return tuitionFees[tuitionKey] || null;
   };
 
-  // Helper function to get unit price: ưu tiên hoc_phi_rieng theo môn học (số tiền), nếu không có thì lấy giá môn học
+  // Helper function to get unit price: ưu tiên hoc_phi_rieng theo lớp học (số tiền), nếu không có thì lấy giá môn học
   const getUnitPrice = (studentId: string, subject?: string, classId?: string, pricePerSession?: number): number => {
-    // Priority 1: Use student's hoc_phi_rieng for the specific subject if available
+    // Priority 1: Use student's hoc_phi_rieng for the specific class if available
     const student = students.find((s) => s.id === studentId);
-    const hocPhiRieng = getHocPhiRieng(student, subject);
+    const hocPhiRieng = getHocPhiRieng(student, classId);
     if (hocPhiRieng !== null) {
       return hocPhiRieng;
     }
@@ -1270,8 +1293,7 @@ const InvoicePage = () => {
       newTotalAmount = sessionsToUse.reduce((sum, s) => {
         const classId = s["Class ID"];
         const classInfo = classes.find((c) => c.id === classId);
-        const subject = classInfo?.["Môn học"];
-        const hocPhiRieng = getHocPhiRieng(student, subject);
+        const hocPhiRieng = getHocPhiRieng(student, classId);
         
         if (hocPhiRieng !== null) {
           // Dùng học phí riêng cho môn học này
@@ -2086,8 +2108,7 @@ const InvoicePage = () => {
         const student = students.find((s) => s.id === invoice.studentId);
         const classId = session["Class ID"];
         const classInfo = classes.find((c) => c.id === classId);
-        const subject = classInfo?.["Môn học"];
-        const hocPhiRieng = getHocPhiRieng(student, subject);
+        const hocPhiRieng = getHocPhiRieng(student, classId);
         
         let pricePerSession = 0;
         if (hocPhiRieng !== null) {
@@ -3724,8 +3745,8 @@ const InvoicePage = () => {
           const totalDebt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
           // Tính Thành tiền theo công thức mới: (Số buổi × Đơn giá) - Miễn giảm
           const student = students.find((s) => s.id === record.studentId);
-          // Ưu tiên: Học phí riêng của học sinh theo môn học, nếu không có thì lấy từ invoice
-          const hocPhiRieng = getHocPhiRieng(student, record.subject);
+          // Ưu tiên: Học phí riêng của học sinh theo lớp học, nếu không có thì lấy từ invoice
+          const hocPhiRieng = getHocPhiRieng(student, record.classId);
           let unitPrice = hocPhiRieng !== null ? hocPhiRieng : (record.pricePerSession || 0);
           const thanhTien = record.status === "unpaid"
             ? Math.max(0, (record.totalSessions * unitPrice) - record.discount)

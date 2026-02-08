@@ -74,6 +74,7 @@ const ClassManagement = () => {
   // Inline editing state for tuition fee in student list
   const [editingTuitionStudentId, setEditingTuitionStudentId] = useState<string | null>(null);
   const [editingTuitionValue, setEditingTuitionValue] = useState<number | null>(null);
+  const [tuitionFees, setTuitionFees] = useState<Record<string, number | null>>({}); // Key: "Mã học sinh-Mã lớp"
 
   const handleEdit = (record: Class) => {
     setEditingClass(record);
@@ -188,28 +189,58 @@ const ClassManagement = () => {
         return;
       }
 
-      const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-      const updatedData = {
-        ...student,
-        "hoc_phi_rieng": tuitionFee || null,
+      if (!viewingClass) {
+        message.error("Không tìm thấy thông tin lớp học");
+        setEditingTuitionStudentId(null);
+        setEditingTuitionValue(null);
+        return;
+      }
+
+      // Create key: Mã học sinh + Mã lớp
+      const studentCode = student["Mã học sinh"] || "";
+      const classCode = viewingClass["Mã lớp"] || "";
+      const tuitionKey = `${studentCode}-${classCode}`;
+
+      // Save to separate table: Học_phí_riêng
+      const url = `${DATABASE_URL_BASE}/datasheet/H%E1%BB%8Dc_ph%C3%AD_ri%C3%AAng/${encodeURIComponent(tuitionKey)}.json`;
+      
+      const tuitionData = {
+        studentId: studentId,
+        studentCode: studentCode,
+        classId: viewingClass.id,
+        classCode: classCode,
+        tuitionFee: tuitionFee || null,
+        updatedAt: new Date().toISOString(),
       };
 
       const response = await fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
+        body: JSON.stringify(tuitionData),
       });
 
       if (response.ok) {
-        // Update local state
-        setStudents(students.map(s => 
-          s.id === studentId 
-            ? { ...s, "hoc_phi_rieng": tuitionFee || null }
-            : s
-        ));
+        // Update local state - update the hoc_phi_rieng in the table display
+        // Note: We don't update student record anymore, but we update the display
         setEditingTuitionStudentId(null);
         setEditingTuitionValue(null);
         message.success("Đã cập nhật học phí riêng thành công!");
+        
+        // Reload tuition fees
+        const tuitionRes = await fetch(
+          `${DATABASE_URL_BASE}/datasheet/Học_phí_riêng.json`
+        );
+        const tuitionData = await tuitionRes.json();
+        if (tuitionData) {
+          const tuitionMap: Record<string, number | null> = {};
+          Object.values(tuitionData).forEach((item: any) => {
+            if (item && item.studentCode && item.classCode) {
+              const key = `${item.studentCode}-${item.classCode}`;
+              tuitionMap[key] = item.tuitionFee;
+            }
+          });
+          setTuitionFees(tuitionMap);
+        }
       } else {
         const errorText = await response.text();
         console.error("❌ Failed to update tuition fee. Status:", response.status, errorText);
@@ -292,9 +323,15 @@ const ClassManagement = () => {
         try {
           let successCount = 0;
           let failCount = 0;
-          const updatedStudentIds: string[] = [];
+          const updatedTuitionKeys: string[] = [];
+          const classCode = viewingClass["Mã lớp"] || "";
 
-          // Update all students in parallel
+          if (!classCode) {
+            message.error("Lớp học chưa có mã lớp");
+            return;
+          }
+
+          // Update all students in parallel - save to Học_phí_riêng table
           const updatePromises = studentIds.map(async (studentId) => {
             const student = students.find(s => s.id === studentId);
             if (!student) {
@@ -302,29 +339,44 @@ const ClassManagement = () => {
               return null;
             }
 
-            const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-            const updatedData = {
-              ...student,
-              "hoc_phi_rieng": classTuitionFee,
+            const studentCode = student["Mã học sinh"] || "";
+            if (!studentCode) {
+              failCount++;
+              return null;
+            }
+
+            // Create key: Mã học sinh + Mã lớp
+            const tuitionKey = `${studentCode}-${classCode}`;
+
+            // Save to Học_phí_riêng table
+            const url = `${DATABASE_URL_BASE}/datasheet/H%E1%BB%8Dc_ph%C3%AD_ri%C3%AAng/${encodeURIComponent(tuitionKey)}.json`;
+            
+            const tuitionData = {
+              studentId: studentId,
+              studentCode: studentCode,
+              classId: viewingClass.id,
+              classCode: classCode,
+              tuitionFee: classTuitionFee,
+              updatedAt: new Date().toISOString(),
             };
 
             try {
               const response = await fetch(url, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(updatedData),
+                body: JSON.stringify(tuitionData),
               });
 
               if (response.ok) {
                 successCount++;
-                updatedStudentIds.push(studentId);
-                return studentId;
+                updatedTuitionKeys.push(tuitionKey);
+                return tuitionKey;
               } else {
                 failCount++;
                 return null;
               }
             } catch (error) {
-              console.error(`Error updating student ${studentId}:`, error);
+              console.error(`Error updating tuition fee for ${tuitionKey}:`, error);
               failCount++;
               return null;
             }
@@ -332,15 +384,20 @@ const ClassManagement = () => {
 
           await Promise.all(updatePromises);
 
-          // Update local state once after all updates are complete
-          if (updatedStudentIds.length > 0) {
-            setStudents(prevStudents => 
-              prevStudents.map(s => 
-                updatedStudentIds.includes(s.id)
-                  ? { ...s, "hoc_phi_rieng": classTuitionFee }
-                  : s
-              )
-            );
+          // Reload tuition fees to update local state
+          const tuitionRes = await fetch(
+            `${DATABASE_URL_BASE}/datasheet/Học_phí_riêng.json`
+          );
+          const tuitionData = await tuitionRes.json();
+          if (tuitionData) {
+            const tuitionMap: Record<string, number | null> = {};
+            Object.values(tuitionData).forEach((item: any) => {
+              if (item && item.studentCode && item.classCode) {
+                const key = `${item.studentCode}-${item.classCode}`;
+                tuitionMap[key] = item.tuitionFee;
+              }
+            });
+            setTuitionFees(tuitionMap);
           }
 
           if (successCount > 0) {
@@ -519,6 +576,22 @@ const ClassManagement = () => {
             })
           );
           setAttendanceSessions(sessionsArray);
+        }
+
+        // Fetch tuition fees (Học_phí_riêng)
+        const tuitionRes = await fetch(
+          `${DATABASE_URL_BASE}/datasheet/Học_phí_riêng.json`
+        );
+        const tuitionData = await tuitionRes.json();
+        if (tuitionData) {
+          const tuitionMap: Record<string, number | null> = {};
+          Object.values(tuitionData).forEach((item: any) => {
+            if (item && item.studentCode && item.classCode) {
+              const key = `${item.studentCode}-${item.classCode}`;
+              tuitionMap[key] = item.tuitionFee;
+            }
+          });
+          setTuitionFees(tuitionMap);
         }
       } catch (error) {
         console.error("Error fetching data:", error);
@@ -1166,19 +1239,25 @@ const ClassManagement = () => {
                     dataSource={viewingClass["Student IDs"]
                       .map((studentId) => {
                         const student = students.find((s) => s.id === studentId);
-                        return student
-                          ? {
-                              key: studentId,
-                              id: studentId,
-                              "Mã học sinh": student["Mã học sinh"] || "-",
-                              "Họ và tên": student["Họ và tên"] || "-",
-                              "Số điện thoại": student["Số điện thoại"] || "-",
-                              "SĐT phụ huynh": student["SĐT phụ huynh"] || "-",
-                              "hoc_phi_rieng": student["hoc_phi_rieng"],
-                              "Email": student["Email"] || "-",
-                              "Trạng thái": student["Trạng thái"] || "-",
-                            }
-                          : null;
+                        if (!student) return null;
+                        
+                        // Get tuition fee from new table: "Mã học sinh-Mã lớp"
+                        const studentCode = student["Mã học sinh"] || "";
+                        const classCode = viewingClass["Mã lớp"] || "";
+                        const tuitionKey = `${studentCode}-${classCode}`;
+                        const tuitionFee = tuitionFees[tuitionKey] || null;
+                        
+                        return {
+                          key: studentId,
+                          id: studentId,
+                          "Mã học sinh": studentCode,
+                          "Họ và tên": student["Họ và tên"] || "-",
+                          "Số điện thoại": student["Số điện thoại"] || "-",
+                          "SĐT phụ huynh": student["SĐT phụ huynh"] || "-",
+                          "hoc_phi_rieng": tuitionFee,
+                          "Email": student["Email"] || "-",
+                          "Trạng thái": student["Trạng thái"] || "-",
+                        };
                       })
                       .filter((item) => item !== null)}
                     columns={[

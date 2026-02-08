@@ -98,6 +98,8 @@ export interface ScoreDetail {
     "Điểm": number; // Score value
     "Ngày": string; // Date
     "Ghi chú"?: string; // Note
+    "Session ID"?: string; // Session ID this score belongs to (for proper isolation by subject/class)
+    "Class ID"?: string; // Class ID this score belongs to (for proper isolation by subject/class)
 }
 
 export interface AttendanceRecord {
