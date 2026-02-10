@@ -456,6 +456,34 @@ const InvoicePage = () => {
 
   // No longer need calculateTravelAllowance - using salary per session instead
 
+  // Helper function to get hoc_phi_rieng for a specific class
+  // Key format: "Mã học sinh-Mã lớp"
+  const getHocPhiRieng = (student: Student | undefined, classId?: string): number | null => {
+    if (!student) {
+      return null;
+    }
+
+    // Get class info to get class code
+    if (!classId) {
+      return null;
+    }
+
+    const classInfo = classes.find((c) => c.id === classId);
+    if (!classInfo) {
+      return null;
+    }
+
+    const studentCode = student["Mã học sinh"] || "";
+    const classCode = classInfo["Mã lớp"] || "";
+    if (!studentCode || !classCode) {
+      return null;
+    }
+
+    // Look up in tuition fees table with key: "Mã học sinh-Mã lớp"
+    const tuitionKey = `${studentCode}-${classCode}`;
+    return tuitionFees[tuitionKey] || null;
+  };
+
   // Load student invoices directly from Firebase (populated by attendance save)
   const studentInvoices = useMemo(() => {
     console.log(`📋 Loading invoices from Firebase for month ${studentMonth + 1}/${studentYear}`);
@@ -1181,34 +1209,6 @@ const InvoicePage = () => {
     });
 
     return classInfo?.["Học phí mỗi buổi"] || course?.Giá || 0;
-  };
-
-  // Helper function to get hoc_phi_rieng for a specific class
-  // Key format: "Mã học sinh-Mã lớp"
-  const getHocPhiRieng = (student: Student | undefined, classId?: string): number | null => {
-    if (!student) {
-      return null;
-    }
-
-    // Get class info to get class code
-    if (!classId) {
-      return null;
-    }
-
-    const classInfo = classes.find((c) => c.id === classId);
-    if (!classInfo) {
-      return null;
-    }
-
-    const studentCode = student["Mã học sinh"] || "";
-    const classCode = classInfo["Mã lớp"] || "";
-    if (!studentCode || !classCode) {
-      return null;
-    }
-
-    // Look up in tuition fees table with key: "Mã học sinh-Mã lớp"
-    const tuitionKey = `${studentCode}-${classCode}`;
-    return tuitionFees[tuitionKey] || null;
   };
 
   // Helper function to get unit price: ưu tiên hoc_phi_rieng theo lớp học (số tiền), nếu không có thì lấy giá môn học
