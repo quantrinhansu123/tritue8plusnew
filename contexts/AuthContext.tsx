@@ -502,23 +502,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const signOut = async () => {
     try {
       console.log("🚪 Signing out");
-      
-      // Clear local state first (for teacher authentication)
+
+      // Mark as intentional logout before clearing storage
+      // (this is used by the onAuthStateChanged handler)
+      localStorage.removeItem(STORAGE_KEYS.AUTH_PERSISTENCE);
+
+      // IMPORTANT: if there is an active Firebase session, we must sign out.
+      // Otherwise onAuthStateChanged will immediately restore the user and "logout" will look broken.
+      if (auth.currentUser) {
+        await firebaseSignOut(auth);
+      }
+
+      // Clear local state/storage (covers teacher/parent mock auth too)
       setCurrentUser(null);
       setUserProfile(null);
       setNeedsOnboarding(false);
-
-      // Mark as intentional logout before clearing storage
-      localStorage.removeItem(STORAGE_KEYS.AUTH_PERSISTENCE);
       clearStorage();
-
-      // Try Firebase signOut (for legacy users)
-      try {
-        await firebaseSignOut(auth);
-      } catch (firebaseError) {
-        // Ignore Firebase errors for teacher authentication
-        console.log("💡 Firebase signOut skipped (teacher authentication)");
-      }
 
       console.log("👋 Logged out");
     } catch (error) {

@@ -1,5 +1,6 @@
 import { IconDotsVertical, IconLoader2, IconLogout } from "@tabler/icons-react";
 import { useState } from "react";
+import { message } from "antd";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 export function NavUser({
   user,
@@ -30,11 +32,19 @@ export function NavUser({
   const { signOut } = useAuth();
   const { isMobile } = useSidebar();
   const [isLoading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const handleLogout = async () => {
     setLoading(true);
-    await signOut();
-    setLoading(false);
+    try {
+      await signOut();
+      navigate("/login");
+    } catch (e) {
+      console.error("Logout failed:", e);
+      message.error("Đăng xuất thất bại. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
