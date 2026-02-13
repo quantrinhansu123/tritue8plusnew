@@ -1624,7 +1624,8 @@ const InvoicePage = () => {
     sessionPrices: { [sessionId: string]: number },
     discount: number,
     updatedSessions?: AttendanceSession[],
-    debt?: number
+    debt?: number,
+    customTotalSessions?: number
   ) => {
     try {
       const currentData = studentInvoiceStatus[invoiceId];
@@ -5453,8 +5454,51 @@ const InvoicePage = () => {
           });
 
           // Tính tổng số buổi từ số buổi đã chỉnh sửa (nếu có)
+          // Cần tính toán totalBySubject trước khi sử dụng
           let totalSessionsToSave = editingInvoice.totalSessions;
           if (Object.keys(editSessionCounts).length > 0) {
+            // Group sessions by subject để tính totalBySubject
+            const subjectGroups: Record<string, {
+              subject: string;
+              sessionCount: number;
+              sessions: AttendanceSession[];
+              currentPrice: number;
+            }> = {};
+
+            editingInvoice.sessions.forEach((session: AttendanceSession) => {
+              const classId = session["Class ID"];
+              const classData = classes.find(c => c.id === classId);
+              const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
+
+              if (!subjectGroups[subject]) {
+                subjectGroups[subject] = {
+                  subject,
+                  sessionCount: 0,
+                  sessions: [],
+                  currentPrice: editSessionPrices[subject] || (getSafeField(session, "Giá/buổi") || 0),
+                };
+              }
+
+              subjectGroups[subject].sessionCount++;
+              subjectGroups[subject].sessions.push(session);
+            });
+
+            // Lấy số buổi gốc từ database và cho phép chỉnh sửa
+            const getOriginalSessionCount = (subject: string, originalCount: number) => {
+              return editSessionCounts[subject] !== undefined ? editSessionCounts[subject] : originalCount;
+            };
+
+            const totalBySubject = Object.entries(subjectGroups).map(([subject, data]) => {
+              const editedSessionCount = getOriginalSessionCount(subject, data.sessionCount);
+              return {
+                subject,
+                ...data,
+                sessionCount: editedSessionCount,
+                originalSessionCount: data.sessionCount,
+                total: (editSessionPrices[subject] || data.currentPrice || 0) * editedSessionCount,
+              };
+            });
+
             // Tính tổng số buổi từ các môn học đã chỉnh sửa
             totalSessionsToSave = totalBySubject.reduce((sum, item) => {
               return sum + item.sessionCount;
