@@ -128,6 +128,16 @@ const StudentListView: React.FC = () => {
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Helper to normalize Vietnamese text for searching (remove accents, lowercase, trim)
+  const normalizeText = (value: string) =>
+    value
+      ? value
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+      : "";
   const [isExtendModalOpen, setExtendModalOpen] = useState(false);
   const [extendingStudent, setExtendingStudent] = useState<Student | null>(
     null
@@ -150,9 +160,6 @@ const StudentListView: React.FC = () => {
   const [editingStarsStudent, setEditingStarsStudent] = useState<Student | null>(null);
   const [starsHistory, setStarsHistory] = useState<any[]>([]);
   
-  // Inline editing state for tuition fee
-  const [editingTuitionStudentId, setEditingTuitionStudentId] = useState<string | null>(null);
-  const [editingTuitionValue, setEditingTuitionValue] = useState<number | null>(null);
 
   // Form instances
   const [editStudentForm] = Form.useForm();
@@ -366,14 +373,6 @@ const StudentListView: React.FC = () => {
         }
       }
 
-      // Get tuition fee from first enrolled class if student doesn't have hoc_phi_rieng
-      let defaultTuitionFee = editingStudent["hoc_phi_rieng"];
-      if (!defaultTuitionFee && enrolledClasses.length > 0) {
-        // Get tuition from first class
-        const firstClass = enrolledClasses[0];
-        defaultTuitionFee = firstClass["Học phí mỗi buổi"] || null;
-      }
-
       editStudentForm.setFieldsValue({
         name: editingStudent["Họ và tên"] || "",
         studentCode: editingStudent["Mã học sinh"] || "",
@@ -384,7 +383,6 @@ const StudentListView: React.FC = () => {
         address: editingStudent["Địa chỉ"] || "",
         password: editingStudent["Mật khẩu"] || "",
         grade: editingStudent["Khối"] || "",
-        hocPhiRieng: defaultTuitionFee,
         // registeredSubjects now holds class IDs
         registeredSubjects: enrolledClassIds,
         // Set enrollment date from existing data (if any)
@@ -676,12 +674,12 @@ const StudentListView: React.FC = () => {
       })
       .filter((student) => {
         if (!searchTerm) return true;
-        const search = searchTerm.toLowerCase();
+        const search = normalizeText(searchTerm);
         return (
-          student["Họ và tên"]?.toLowerCase().includes(search) ||
-          student["Mã học sinh"]?.toLowerCase().includes(search) ||
-          student["Số điện thoại"]?.toLowerCase().includes(search) ||
-          student["Email"]?.toLowerCase().includes(search)
+          normalizeText(student["Họ và tên"] || "").includes(search) ||
+          normalizeText(student["Mã học sinh"] || "").includes(search) ||
+          normalizeText(student["Số điện thoại"] || "").includes(search) ||
+          normalizeText(student["Email"] || "").includes(search)
         );
       });
   }, [
@@ -711,59 +709,6 @@ const StudentListView: React.FC = () => {
     setEditModalOpen(true);
   };
 
-  const handleSaveTuitionFee = async (studentId: string, tuitionFee: number | null) => {
-    try {
-      if (!currentUser) {
-        message.error("Bạn phải đăng nhập để cập nhật học phí");
-        setEditingTuitionStudentId(null);
-        setEditingTuitionValue(null);
-        return;
-      }
-
-      const student = students.find(s => s.id === studentId);
-      if (!student) {
-        message.error("Không tìm thấy học sinh");
-        setEditingTuitionStudentId(null);
-        setEditingTuitionValue(null);
-        return;
-      }
-
-      const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-      const updatedData = {
-        ...student,
-        "hoc_phi_rieng": tuitionFee || null,
-      };
-
-      const response = await fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
-      });
-
-      if (response.ok) {
-        // Update local state
-        setStudents(students.map(s => 
-          s.id === studentId 
-            ? { ...s, "hoc_phi_rieng": tuitionFee || null }
-            : s
-        ));
-        setEditingTuitionStudentId(null);
-        setEditingTuitionValue(null);
-        message.success("Đã cập nhật học phí riêng thành công!");
-      } else {
-        const errorText = await response.text();
-        console.error("❌ Failed to update tuition fee. Status:", response.status, errorText);
-        message.error(`Không cập nhật được học phí. Status: ${response.status}`);
-        setEditingTuitionStudentId(null);
-        setEditingTuitionValue(null);
-      }
-    } catch (error) {
-      console.error("Error updating tuition fee:", error);
-      message.error("Có lỗi xảy ra khi cập nhật học phí");
-      setEditingTuitionStudentId(null);
-      setEditingTuitionValue(null);
-    }
-  };
 
   const handleDeleteStudent = async (e: React.MouseEvent, student: Student) => {
     e.stopPropagation();
@@ -2493,7 +2438,6 @@ const StudentListView: React.FC = () => {
                 code: student["Mã học sinh"] || "-",
                 phone: student["Số điện thoại"] || "-",
                 parentPhone: student["SĐT phụ huynh"] || "-",
-                hocPhiRieng: student["hoc_phi_rieng"],
                 hours: `${student.hours}h ${student.minutes} p`,
                 hoursExtended: `${student.hoursExtended || 0} h`,
                 hoursRemaining: `${student.hoursRemaining ? student.hoursRemaining.toFixed(2) : "0.00"} h`,
@@ -2541,73 +2485,6 @@ const StudentListView: React.FC = () => {
                   dataIndex: "parentPhone",
                   key: "parentPhone",
                   width: 120,
-                },
-                {
-                  title: "Học phí riêng",
-                  dataIndex: "hocPhiRieng",
-                  key: "hocPhiRieng",
-                  width: 180,
-                  render: (fee: number, record: any) => {
-                    const isEditing = editingTuitionStudentId === record.student.id;
-                    const currentValue = isEditing ? editingTuitionValue : fee;
-                    
-                    if (isEditing) {
-                      return (
-                        <InputNumber<number>
-                          value={currentValue || undefined}
-                          onChange={(value) => setEditingTuitionValue(value || null)}
-                          onPressEnter={async () => {
-                            if (editingTuitionStudentId) {
-                              await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
-                            }
-                          }}
-                          onBlur={async () => {
-                            if (editingTuitionStudentId) {
-                              await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
-                            }
-                          }}
-                          min={0}
-                          step={10000}
-                          style={{ width: "100%" }}
-                          formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                          parser={(value) => {
-                            const parsed = value!.replace(/\$\s?|(,*)/g, '');
-                            return parsed === '' ? 0 : Number(parsed);
-                          }}
-                          autoFocus
-                        />
-                      );
-                    }
-                    
-                    return (
-                      <div
-                        onClick={async () => {
-                          // Save previous editing row if exists
-                          if (editingTuitionStudentId && editingTuitionStudentId !== record.student.id) {
-                            await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
-                          }
-                          setEditingTuitionStudentId(record.student.id);
-                          setEditingTuitionValue(fee || null);
-                        }}
-                        style={{
-                          cursor: "pointer",
-                          padding: "4px 8px",
-                          borderRadius: "4px",
-                          minHeight: "32px",
-                          display: "flex",
-                          alignItems: "center",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = "#f5f5f5";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = "transparent";
-                        }}
-                      >
-                        {fee ? `${fee.toLocaleString('vi-VN')} đ` : "-"}
-                      </div>
-                    );
-                  },
                 },
                 {
                   title: "Môn đăng ký",
@@ -3537,7 +3414,6 @@ const StudentListView: React.FC = () => {
                 "Số giờ đã gia hạn": editingStudent?.["Số giờ đã gia hạn"] || 0,
                 "Khối": values.grade || "",
                 "Môn học đăng ký": values.registeredSubjects || [],
-                "hoc_phi_rieng": values.hocPhiRieng || null,
               };
               // Preserve the ID if editing an existing student
               if (editingStudent?.id) {
@@ -3604,26 +3480,6 @@ const StudentListView: React.FC = () => {
                   <Input.Password placeholder="Nhập mật khẩu" />
                 </Form.Item>
               </Col>
-              <Col span={12}>
-                <Form.Item
-                  label="Học phí riêng"
-                  name="hocPhiRieng"
-                  extra="Học phí riêng cho học sinh này (mặc định lấy từ lớp học, có thể chỉnh sửa)"
-                >
-                  <InputNumber<number>
-                    min={0}
-                    step={10000}
-                    placeholder="Tự động từ lớp học"
-                    style={{ width: "100%" }}
-                    formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                    parser={(value) => {
-                      const parsed = value!.replace(/\$\s?|(,*)/g, '');
-                      return parsed === '' ? 0 : Number(parsed);
-                    }}
-                    addonAfter="VNĐ"
-                  />
-                </Form.Item>
-              </Col>
               <Col span={24}>
                 <Form.Item
                   label="Lớp đăng ký"
@@ -3641,15 +3497,7 @@ const StudentListView: React.FC = () => {
                     optionFilterProp="label"
                     allowClear
                     onChange={(selectedClassIds) => {
-                      // Auto-fill tuition fee from first selected class if hocPhiRieng is empty
-                      const currentTuition = editStudentForm.getFieldValue('hocPhiRieng');
-                      if (!currentTuition && selectedClassIds && selectedClassIds.length > 0) {
-                        const firstClassId = selectedClassIds[0];
-                        const firstClass = classes.find(c => c.id === firstClassId);
-                        if (firstClass && firstClass["Học phí mỗi buổi"]) {
-                          editStudentForm.setFieldValue('hocPhiRieng', firstClass["Học phí mỗi buổi"]);
-                        }
-                      }
+                      // Class selection changed
                     }}
                   />
                 </Form.Item>

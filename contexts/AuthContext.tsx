@@ -277,13 +277,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
         }
       } else {
-        console.log("👤 User logged out");
-        setUserProfile(null);
-        setNeedsOnboarding(false);
-        // Only clear storage if this is an intentional logout, not a page refresh
-        const authPersistence = loadFromStorage<boolean>(STORAGE_KEYS.AUTH_PERSISTENCE);
-        if (!authPersistence) {
-          clearStorage();
+        console.log("👤 User logged out or no Firebase user");
+        // Check if we have a stored profile (for teacher/parent mock auth)
+        const storedProfile = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
+        if (storedProfile) {
+          // If we have a stored profile but no Firebase user, this might be:
+          // 1. Teacher/Parent login (mock user) - keep the profile
+          // 2. Page refresh with teacher/parent login - restore the profile
+          console.log("📦 Restoring stored profile (teacher/parent login):", storedProfile.email);
+          setUserProfile(storedProfile);
+          
+          // Restore currentUser from stored profile
+          const restoredUser = {
+            uid: storedProfile.uid,
+            email: storedProfile.email,
+            emailVerified: true,
+            displayName: storedProfile.displayName || undefined,
+          } as User;
+          setCurrentUser(restoredUser);
+          
+          // Check onboarding status
+          if (storedProfile.role === "teacher" && !storedProfile.teacherId) {
+            setNeedsOnboarding(true);
+          } else {
+            setNeedsOnboarding(false);
+          }
+        } else {
+          // No stored profile and no Firebase user = actual logout
+          console.log("👤 Actual logout - clearing profile");
+          setUserProfile(null);
+          setNeedsOnboarding(false);
+          // Only clear storage if this is an intentional logout, not a page refresh
+          const authPersistence = loadFromStorage<boolean>(STORAGE_KEYS.AUTH_PERSISTENCE);
+          if (!authPersistence) {
+            clearStorage();
+          }
         }
       }
 
