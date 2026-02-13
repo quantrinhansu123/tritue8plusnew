@@ -3581,7 +3581,12 @@ const InvoicePage = () => {
       const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
       
       const priceForSubject = editSessionPrices[subject];
-      const newPrice = priceForSubject !== undefined ? priceForSubject : (getSafeField(session, "Giá/buổi") || 0);
+      // Ưu tiên: giá đã chỉnh sửa > giá từ session > getUnitPrice()
+      let newPrice = priceForSubject;
+      if (newPrice === undefined) {
+        const sessionPrice = getSafeField(session, "Giá/buổi");
+        newPrice = sessionPrice ? Number(sessionPrice) : getUnitPrice(editingInvoice.studentId, subject, classId, editingInvoice.pricePerSession);
+      }
 
       return {
         ...session,
@@ -3621,8 +3626,13 @@ const InvoicePage = () => {
       
       if (!subjectGroups[subject]) {
         const priceForSubject = editSessionPrices[subject];
-        const price = priceForSubject !== undefined ? priceForSubject : (getSafeField(session, "Giá/buổi") || 0);
-        subjectGroups[subject] = { count: 0, price };
+        // Ưu tiên: giá đã chỉnh sửa > giá từ session > getUnitPrice()
+        let price = priceForSubject;
+        if (price === undefined) {
+          const sessionPrice = getSafeField(session, "Giá/buổi");
+          price = sessionPrice ? Number(sessionPrice) : getUnitPrice(editingInvoice.studentId, subject, classId, editingInvoice.pricePerSession);
+        }
+        subjectGroups[subject] = { count: 0, price: price || 0 };
       }
       subjectGroups[subject].count++;
     });
@@ -4179,20 +4189,19 @@ const InvoicePage = () => {
           if (debt === 0) {
             debt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
           }
-          // Tính Thành tiền theo công thức mới: (Số buổi × Đơn giá) - Miễn giảm
-          // Đơn giá = Giá môn học × Học phí riêng (nếu có)
-          let unitPrice = 0;
-          if (record.invoices.length > 0) {
-            // Tính tổng giá từ tất cả các môn
-            const totalPrice = record.invoices.reduce((sum, inv) => {
-              const price = getUnitPrice(record.studentId, inv.subject, inv.classId, inv.pricePerSession);
-              return sum + (price * inv.totalSessions);
-            }, 0);
-            // Tính giá trung bình mỗi buổi
-            unitPrice = record.totalSessions > 0 ? totalPrice / record.totalSessions : 0;
-          }
+          // Tính Thành tiền theo công thức thống nhất: Tổng giá từng môn - Miễn giảm
+          // Tổng giá mỗi môn = unitPrice × totalSessions của môn đó
+          // unitPrice được lấy từ getUnitPrice() với thứ tự ưu tiên:
+          // 1. Học phí riêng của học sinh cho lớp đó (nếu có)
+          // 2. Giá từ invoice (pricePerSession)
+          // 3. Giá từ lớp học hoặc khóa học
+          let totalAmount = 0;
+          record.invoices.forEach((inv) => {
+            const unitPrice = getUnitPrice(record.studentId, inv.subject, inv.classId, inv.pricePerSession);
+            totalAmount += unitPrice * inv.totalSessions;
+          });
           const thanhTien = record.status === "unpaid"
-            ? Math.max(0, (record.totalSessions * unitPrice) - record.discount)
+            ? Math.max(0, totalAmount - record.discount)
             : 0;
           // Tổng nợ lũy kế = Thành tiền + Nợ học phí
           const combinedDebt = thanhTien + debt;
@@ -4455,11 +4464,12 @@ const InvoicePage = () => {
         render: (_: any, record: StudentInvoice) => {
           // Nợ học phí (từ các tháng trước)
           const totalDebt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
-          // Tính Thành tiền theo công thức mới: (Số buổi × Đơn giá) - Miễn giảm
-          const student = students.find((s) => s.id === record.studentId);
-          // Ưu tiên: Học phí riêng của học sinh theo lớp học, nếu không có thì lấy từ invoice
-          const hocPhiRieng = getHocPhiRieng(student, record.classId);
-          let unitPrice = hocPhiRieng !== null ? hocPhiRieng : (record.pricePerSession || 0);
+          // Tính Thành tiền theo công thức thống nhất: (Số buổi × Đơn giá) - Miễn giảm
+          // unitPrice được lấy từ getUnitPrice() với thứ tự ưu tiên:
+          // 1. Học phí riêng của học sinh cho lớp đó (nếu có)
+          // 2. Giá từ invoice (pricePerSession)
+          // 3. Giá từ lớp học hoặc khóa học
+          const unitPrice = getUnitPrice(record.studentId, record.subject, record.classId, record.pricePerSession);
           const thanhTien = record.status === "unpaid"
             ? Math.max(0, (record.totalSessions * unitPrice) - record.discount)
             : 0;
