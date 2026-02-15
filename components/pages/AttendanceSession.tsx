@@ -133,6 +133,43 @@ const AttendanceSessionPage = () => {
   } | null>(null);
   const [tempTime, setTempTime] = useState<any>(null);
 
+  // Calculate debt from previous unpaid invoices for a student
+  const calculateDebtFromPreviousInvoices = (
+    studentId: string,
+    currentMonth: number,
+    currentYear: number,
+    existingInvoices: Record<string, any>
+  ): number => {
+    let totalDebt = 0;
+    
+    Object.entries(existingInvoices).forEach(([key, invoice]) => {
+      if (!invoice || typeof invoice !== "object") return;
+      
+      // Only consider invoices for the current student
+      if (invoice.studentId !== studentId) return;
+      
+      const invoiceMonth = invoice.month ?? null;
+      const invoiceYear = invoice.year ?? null;
+      if (invoiceMonth === null || invoiceYear === null) return;
+      
+      // Only consider months strictly before the current month/year
+      // currentMonth is 0-indexed (0=Jan, 11=Dec)
+      const isBeforeCurrentMonth = invoiceYear < currentYear || 
+        (invoiceYear === currentYear && invoiceMonth < currentMonth);
+      
+      if (isBeforeCurrentMonth) {
+        const status = invoice.status || "unpaid";
+        // Only count unpaid invoices
+        if (status !== "paid") {
+          const amount = invoice.finalAmount ?? invoice.totalAmount ?? 0;
+          totalDebt += amount;
+        }
+      }
+    });
+    
+    return totalDebt;
+  };
+
   // Sync invoices ONLY for students in the current class session being saved
   // This prevents creating invoices for students in other classes
   const syncInvoicesForCurrentSession = async (
@@ -256,6 +293,14 @@ const AttendanceSessionPage = () => {
                   }
                 } else if (!existingExtra) {
                   // Tạo invoice bổ sung mới
+                  // Calculate debt from previous unpaid invoices
+                  const debt = calculateDebtFromPreviousInvoices(
+                    studentId,
+                    targetMonth,
+                    targetYear,
+                    existingInvoices
+                  );
+                  
                   const newExtraInvoice = {
                     id: extraKey,
                     studentId,
@@ -274,6 +319,7 @@ const AttendanceSessionPage = () => {
                     sessions: [sessionInfo],
                     isExtra: true, // Đánh dấu là invoice bổ sung
                     parentInvoiceId: key, // Liên kết với invoice gốc đã paid
+                    debt: debt, // Lưu công nợ từ các tháng trước
                   };
                   const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${extraKey}`);
                   upsertPromises.push(update(invoiceRef, newExtraInvoice));
@@ -301,6 +347,14 @@ const AttendanceSessionPage = () => {
             }
           } else {
             // Create new invoice
+            // Calculate debt from previous unpaid invoices
+            const debt = calculateDebtFromPreviousInvoices(
+              studentId,
+              targetMonth,
+              targetYear,
+              existingInvoices
+            );
+            
             const newInvoice = {
               id: key,
               studentId,
@@ -317,6 +371,7 @@ const AttendanceSessionPage = () => {
               finalAmount: pricePerSession,
               status: "unpaid",
               sessions: [sessionInfo],
+              debt: debt, // Lưu công nợ từ các tháng trước
             };
             const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
             upsertPromises.push(update(invoiceRef, newInvoice));

@@ -1243,6 +1243,97 @@ const InvoicePage = () => {
     });
   };
 
+  // Auto-update debt for all invoices that don't have debt saved
+  const updateDebtForAllInvoices = async () => {
+    try {
+      message.loading({ content: "Đang cập nhật công nợ cho tất cả phiếu thu...", key: "updateDebt", duration: 0 });
+      
+      const updatePromises: Promise<void>[] = [];
+      let updatedCount = 0;
+      
+      // Get all invoices from Firebase
+      const invoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
+      const snapshot = await get(invoicesRef);
+      const allInvoices = snapshot.val() || {};
+      
+      // Helper function to calculate debt from all invoices
+      const calculateDebtFromInvoices = (studentId: string, currentMonth: number, currentYear: number, invoices: Record<string, any>): number => {
+        let totalDebt = 0;
+        
+        Object.entries(invoices).forEach(([key, invoice]) => {
+          if (!invoice || typeof invoice !== "object") return;
+          
+          // Only consider invoices for the current student
+          if (invoice.studentId !== studentId) return;
+          
+          const invoiceMonth = invoice.month ?? null;
+          const invoiceYear = invoice.year ?? null;
+          if (invoiceMonth === null || invoiceYear === null) return;
+          
+          // Only consider months strictly before the current month/year
+          // currentMonth is 0-indexed (0=Jan, 11=Dec)
+          const isBeforeCurrentMonth = invoiceYear < currentYear || 
+            (invoiceYear === currentYear && invoiceMonth < currentMonth);
+          
+          if (isBeforeCurrentMonth) {
+            const status = invoice.status || "unpaid";
+            // Only count unpaid invoices
+            if (status !== "paid") {
+              const amount = invoice.finalAmount ?? invoice.totalAmount ?? 0;
+              totalDebt += amount;
+            }
+          }
+        });
+        
+        return totalDebt;
+      };
+      
+      Object.entries(allInvoices).forEach(([invoiceId, invoiceData]: [string, any]) => {
+        if (!invoiceData || typeof invoiceData !== "object") return;
+        
+        const studentId = invoiceData.studentId;
+        const month = invoiceData.month ?? null;
+        const year = invoiceData.year ?? null;
+        
+        if (!studentId || month === null || year === null) return;
+        
+        // Check if debt is already saved
+        const hasDebt = invoiceData.debt !== undefined && invoiceData.debt !== null;
+        
+        if (!hasDebt) {
+          // Calculate debt for this invoice from all invoices
+          const debt = calculateDebtFromInvoices(studentId, month, year, allInvoices);
+          
+          // Update invoice with calculated debt
+          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
+          updatePromises.push(
+            update(invoiceRef, { debt: debt }).then(() => {
+              updatedCount++;
+            })
+          );
+        }
+      });
+      
+      await Promise.all(updatePromises);
+      
+      message.success({ 
+        content: `Đã cập nhật công nợ cho ${updatedCount} phiếu thu`, 
+        key: "updateDebt",
+        duration: 3 
+      });
+      
+      // Refresh data
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (error) {
+      console.error("Error updating debt for all invoices:", error);
+      message.error({ 
+        content: "Lỗi khi cập nhật công nợ", 
+        key: "updateDebt",
+        duration: 3 
+      });
+    }
+  };
+
   // Helper function to update debt for invoices after a deleted invoice
   const updateDebtForLaterInvoices = async (
     deletedStudentId: string,
@@ -1310,6 +1401,202 @@ const InvoicePage = () => {
       console.error("Error deleting invoice:", error);
       message.error("Lỗi khi xóa phiếu thu");
     }
+  };
+
+  // Reset và tạo lại TẤT CẢ invoice từ dữ liệu điểm danh
+  const resetAllInvoicesFromSessions = async () => {
+    Modal.confirm({
+      title: "Xác nhận reset toàn bộ invoice",
+      content: `Bạn có chắc chắn muốn RESET và tạo lại TẤT CẢ invoice từ dữ liệu điểm danh?\n\nHành động này sẽ:\n- Xóa TẤT CẢ invoice (cả đã thanh toán và chưa thanh toán)\n- Tạo lại invoice từ dữ liệu điểm danh\n- Tự động tính công nợ cho từng invoice\n\n⚠️ CẢNH BÁO: Dữ liệu invoice hiện tại sẽ bị XÓA VĨNH VIỄN!`,
+      okText: "Reset tất cả",
+      cancelText: "Hủy",
+      okType: "danger",
+      width: 600,
+      onOk: async () => {
+        try {
+          message.loading({ content: "Đang reset và tạo lại invoice từ điểm danh...", key: "resetInvoices", duration: 0 });
+          
+          // Step 1: Lấy tất cả invoice hiện tại
+          const invoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
+          const snapshot = await get(invoicesRef);
+          const allInvoices = snapshot.val() || {};
+          
+          // Step 2: Xóa tất cả invoice
+          message.loading({ content: `Đang xóa ${Object.keys(allInvoices).length} invoice cũ...`, key: "resetInvoices" });
+          const deletePromises = Object.keys(allInvoices).map((key) => {
+            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+            return remove(invoiceRef);
+          });
+          await Promise.all(deletePromises);
+          
+          // Step 3: Tạo lại invoice từ sessions
+          message.loading({ content: "Đang tạo lại invoice từ điểm danh...", key: "resetInvoices" });
+          
+          const invoicesToCreate: Record<string, any> = {};
+          const invoiceDebtMap: Record<string, number> = {}; // Lưu debt cho từng invoice
+          
+          // Group sessions by student-class-month-year
+          sessions.forEach((session) => {
+            if (!session["Ngày"] || !session["Điểm danh"]) return;
+            
+            const sessionDate = new Date(session["Ngày"]);
+            const sessionMonth = sessionDate.getMonth();
+            const sessionYear = sessionDate.getFullYear();
+            const classId = session["Class ID"];
+            const classInfo = classes.find((c) => c.id === classId);
+            
+            if (!classInfo) return;
+            
+            // Get price per session
+            const subject = classInfo["Môn học"] || "";
+            const course = courses.find((c) => {
+              if (c.Khối !== classInfo.Khối) return false;
+              const courseSubject = c["Môn học"];
+              if (courseSubject === subject) return true;
+              const subjectOption = subjectOptions.find(
+                (opt) => opt.label === subject || opt.value === subject
+              );
+              if (subjectOption) {
+                return courseSubject === subjectOption.label || courseSubject === subjectOption.value;
+              }
+              return false;
+            });
+            
+            const pricePerSession = classInfo?.["Học phí mỗi buổi"] || course?.Giá || 0;
+            if (pricePerSession === 0) return;
+            
+            // Process attendance records
+            const attendanceRecords = session["Điểm danh"] || [];
+            attendanceRecords.forEach((record: any) => {
+              const studentId = record["Student ID"];
+              const isPresent = record["Có mặt"] === true || record["Có mặt"] === "true";
+              const isExcused = record["Vắng có phép"] === true || record["Vắng có phép"] === "true";
+              
+              // Tạo invoice cho học sinh có mặt hoặc vắng có phép
+              if (!studentId || (!isPresent && !isExcused)) return;
+              
+              const student = students.find((s) => s.id === studentId);
+              if (!student) return;
+              
+              // Key format: studentId-classId-month-year
+              const invoiceKey = `${studentId}-${classId}-${sessionMonth}-${sessionYear}`;
+              
+              // Initialize invoice if not exists
+              if (!invoicesToCreate[invoiceKey]) {
+                invoicesToCreate[invoiceKey] = {
+                  id: invoiceKey,
+                  studentId,
+                  studentName: student["Họ và tên"] || "",
+                  studentCode: student["Mã học sinh"] || "",
+                  classId,
+                  className: classInfo["Tên lớp"] || "",
+                  classCode: classInfo["Mã lớp"] || "",
+                  month: sessionMonth,
+                  year: sessionYear,
+                  totalSessions: 0,
+                  totalAmount: 0,
+                  discount: 0,
+                  finalAmount: 0,
+                  status: "unpaid",
+                  sessions: [],
+                };
+              }
+              
+              // Add session
+              const sessionInfo = {
+                Ngày: session["Ngày"],
+                "Tên lớp": classInfo["Tên lớp"],
+                "Mã lớp": classInfo["Mã lớp"],
+                "Class ID": classId,
+              };
+              
+              // Check if session already added
+              const sessionExists = invoicesToCreate[invoiceKey].sessions.some(
+                (s: any) => s["Ngày"] === session["Ngày"] && s["Class ID"] === classId
+              );
+              
+              if (!sessionExists) {
+                invoicesToCreate[invoiceKey].sessions.push(sessionInfo);
+                invoicesToCreate[invoiceKey].totalSessions += 1;
+                
+                // Use hoc_phi_rieng if available
+                const hocPhiRieng = getHocPhiRieng(student, classId);
+                const sessionPrice = hocPhiRieng !== null ? hocPhiRieng : pricePerSession;
+                
+                invoicesToCreate[invoiceKey].totalAmount += sessionPrice;
+              }
+            });
+          });
+          
+          // Step 4: Tính debt và tạo invoice
+          message.loading({ content: "Đang tính công nợ và tạo invoice...", key: "resetInvoices" });
+          
+          const createPromises: Promise<void>[] = [];
+          let createdCount = 0;
+          
+          // Sort invoices by year and month to calculate debt correctly
+          const sortedInvoiceKeys = Object.keys(invoicesToCreate).sort((a, b) => {
+            const invA = invoicesToCreate[a];
+            const invB = invoicesToCreate[b];
+            if (invA.year !== invB.year) return invA.year - invB.year;
+            return invA.month - invB.month;
+          });
+          
+          sortedInvoiceKeys.forEach((invoiceKey) => {
+            const invoice = invoicesToCreate[invoiceKey];
+            
+            // Calculate final amount
+            invoice.finalAmount = Math.max(0, invoice.totalAmount - (invoice.discount || 0));
+            
+            // Calculate debt from previous invoices (already created)
+            let debt = 0;
+            Object.entries(invoicesToCreate).forEach(([key, prevInvoice]) => {
+              if (key === invoiceKey) return;
+              
+              // Only consider invoices before current invoice
+              const isBefore = prevInvoice.year < invoice.year || 
+                (prevInvoice.year === invoice.year && prevInvoice.month < invoice.month);
+              
+              if (isBefore && prevInvoice.studentId === invoice.studentId) {
+                // Only count unpaid invoices
+                if (prevInvoice.status !== "paid") {
+                  debt += prevInvoice.finalAmount || prevInvoice.totalAmount || 0;
+                }
+              }
+            });
+            
+            // Add debt to invoice
+            invoice.debt = debt;
+            
+            // Create invoice in Firebase
+            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceKey}`);
+            createPromises.push(
+              set(invoiceRef, invoice).then(() => {
+                createdCount++;
+              })
+            );
+          });
+          
+          await Promise.all(createPromises);
+          
+          message.success({ 
+            content: `Đã reset và tạo lại ${createdCount} invoice từ điểm danh. Tất cả công nợ đã được tính tự động.`, 
+            key: "resetInvoices",
+            duration: 5
+          });
+          
+          // Refresh data
+          setRefreshTrigger((prev) => prev + 1);
+        } catch (error) {
+          console.error("Error resetting invoices:", error);
+          message.error({ 
+            content: "Lỗi khi reset invoice", 
+            key: "resetInvoices",
+            duration: 3
+          });
+        }
+      }
+    });
   };
 
   // Delete all data for a specific month/year (invoices and sessions)
@@ -2276,6 +2563,7 @@ const InvoicePage = () => {
   };
 
   // Build detailed debt breakdown per month for a student
+  // Tính TỔNG TOÀN BỘ NỢ từ TẤT CẢ các tháng/năm TRƯỚC tháng hiện tại, không chỉ trong cùng năm
   const getStudentDebtBreakdown = (
     studentId: string,
     currentMonth: number,
@@ -2284,6 +2572,8 @@ const InvoicePage = () => {
     const debtMap: Record<string, { month: number; year: number; amount: number }> = {};
 
     // 1) Check persisted invoices from Firebase
+    // LƯU Ý: studentInvoiceStatus chứa TẤT CẢ invoice từ Firebase (không bị filter theo tháng/năm)
+    // Nên có thể tính nợ từ TẤT CẢ các năm trước, không chỉ trong cùng năm
     Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
       if (!data || typeof data === "string") return;
       const sid = data.studentId;
@@ -2294,13 +2584,14 @@ const InvoicePage = () => {
       // Only consider invoices for the current student
       if (sid !== studentId) return;
 
-      // Only consider months strictly before the current month/year
-      // IMPORTANT: currentMonth is 0-indexed (0=Jan, 11=Dec), so we need to compare correctly
-      // We want: invoice month/year < current month/year (strictly before)
-      // Example: If viewing month 12/2025 (currentMonth=11, currentYear=2025),
-      //          we should only count debts from months 1-11/2025 and earlier
+      // Tính TẤT CẢ các tháng/năm TRƯỚC tháng hiện tại
+      // Logic: (năm < năm hiện tại) HOẶC (năm = năm hiện tại VÀ tháng < tháng hiện tại)
+      // IMPORTANT: currentMonth is 0-indexed (0=Jan, 11=Dec)
+      // Ví dụ: Xem tháng 2/2025 (currentMonth=1, currentYear=2025)
+      //        → Tính nợ từ: TẤT CẢ các tháng năm 2024, tháng 1/2025, và các tháng/năm trước đó
       const isBeforeCurrentMonth = y < currentYear || (y === currentYear && m < currentMonth);
       if (isBeforeCurrentMonth) {
+        // Chỉ tính các invoice CHƯA THANH TOÁN (status !== "paid")
         const status = data.status || "unpaid";
         if (status !== "paid") {
           const amt = data.finalAmount ?? data.totalAmount ?? 0;
@@ -2318,13 +2609,15 @@ const InvoicePage = () => {
     });
 
     // 1b) Also check processed invoices from studentInvoices (fallback if Firebase data is missing)
+    // LƯU Ý: studentInvoices chỉ chứa invoice của tháng/năm được chọn (bị filter)
+    // Nên phần này chỉ là fallback, chủ yếu dựa vào studentInvoiceStatus ở trên
     studentInvoices.forEach((invoice) => {
       if (invoice.studentId !== studentId) return;
       
       const m = invoice.month;
       const y = invoice.year;
       
-      // Only consider months strictly before the current month/year
+      // Tính TẤT CẢ các tháng/năm TRƯỚC tháng hiện tại
       const isBeforeCurrentMonth = y < currentYear || (y === currentYear && m < currentMonth);
       if (!isBeforeCurrentMonth) return;
       
@@ -2332,7 +2625,7 @@ const InvoicePage = () => {
       const mapKey = `${m}-${y}`;
       if (debtMap[mapKey]) return; // Already counted
       
-      // Only count unpaid invoices
+      // Chỉ tính các invoice CHƯA THANH TOÁN
       if (invoice.status !== "paid") {
         const amt = invoice.finalAmount ?? invoice.totalAmount ?? 0;
         if (amt > 0) {
@@ -2342,17 +2635,16 @@ const InvoicePage = () => {
     });
 
     // 2) Also check sessions that may not have persisted invoices
+    // Tính các buổi học chưa có invoice (bổ sung cho trường hợp thiếu invoice)
     sessions.forEach((session) => {
       if (!session["Ngày"] || !session["Điểm danh"]) return;
       const sessionDate = new Date(session["Ngày"]);
       const sMonth = sessionDate.getMonth();
       const sYear = sessionDate.getFullYear();
 
-      // Only consider months strictly before current month/year
-      // IMPORTANT: currentMonth is 0-indexed (0=Jan, 11=Dec), so we need to compare correctly
-      // We want: session month/year < current month/year (strictly before)
-      // Example: If viewing month 12/2025 (currentMonth=11, currentYear=2025),
-      //          we should only count sessions from months 1-11/2025 and earlier
+      // Tính TẤT CẢ các tháng/năm TRƯỚC tháng hiện tại
+      // IMPORTANT: currentMonth is 0-indexed (0=Jan, 11=Dec)
+      // Ví dụ: Xem tháng 2/2025 → Tính các buổi học từ TẤT CẢ các tháng/năm trước
       const isBeforeCurrentMonth = sYear < currentYear || (sYear === currentYear && sMonth < currentMonth);
       if (!isBeforeCurrentMonth) return;
 
@@ -2440,8 +2732,253 @@ const InvoicePage = () => {
 
   // Calculate total accumulated debt for a student across all previous months
   const calculateStudentTotalDebt = (studentId: string, currentMonth: number, currentYear: number): number => {
-    const { total } = getStudentDebtBreakdown(studentId, currentMonth, currentYear);
+    const { total, items } = getStudentDebtBreakdown(studentId, currentMonth, currentYear);
+    
+    // Debug log for specific student (Việt Anh)
+    const student = students.find((s) => s.id === studentId);
+    if (student && (student["Họ và tên"]?.includes("Việt Anh") || student["Tên học sinh"]?.includes("Việt Anh"))) {
+      console.log(`[Debt Debug] ${student["Họ và tên"] || student["Tên học sinh"]} - Tháng ${currentMonth + 1}/${currentYear}:`, {
+        totalDebt: total,
+        debtItems: items,
+        studentId,
+        currentMonth,
+        currentYear
+      });
+    }
+    
     return total;
+  };
+
+  // Tra cứu nợ chi tiết cho một học sinh
+  const lookupStudentDebt = (studentName: string, targetMonth: number, targetYear: number) => {
+    // Tìm học sinh
+    const student = students.find((s) => 
+      s["Họ và tên"]?.includes(studentName) || 
+      s["Tên học sinh"]?.includes(studentName) ||
+      (s as any)?.name?.includes(studentName)
+    );
+
+    if (!student) {
+      console.log(`❌ Không tìm thấy học sinh: ${studentName}`);
+      message.error(`Không tìm thấy học sinh: ${studentName}`);
+      return;
+    }
+
+    const studentId = student.id;
+    const breakdown = getStudentDebtBreakdown(studentId, targetMonth, targetYear);
+    
+    // Tìm tất cả invoice của học sinh này trong Firebase
+    const allInvoices: any[] = [];
+    let savedDebtFromInvoice: number | null = null;
+    
+    Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
+      if (!data || typeof data === "string") return;
+      if (data.studentId === studentId) {
+        const invoiceData = {
+          id: key,
+          ...data,
+          month: data.month ?? null,
+          year: data.year ?? null,
+        };
+        allInvoices.push(invoiceData);
+        
+        // Kiểm tra xem có invoice của tháng đích có debt đã lưu không
+        if (invoiceData.month === targetMonth && invoiceData.year === targetYear) {
+          if (typeof data === "object" && data.debt !== undefined && data.debt !== null) {
+            savedDebtFromInvoice = data.debt;
+          }
+        }
+      }
+    });
+
+    // Lọc invoice trước tháng đích
+    const previousInvoices = allInvoices.filter((inv) => {
+      const m = inv.month;
+      const y = inv.year;
+      if (m === null || y === null) return false;
+      return y < targetYear || (y === targetYear && m < targetMonth);
+    });
+
+    // Phân loại invoice
+    const unpaidInvoices = previousInvoices.filter((inv) => inv.status !== "paid");
+    const paidInvoices = previousInvoices.filter((inv) => inv.status === "paid");
+
+    // Tổng hợp thông tin
+    const totalUnpaid = unpaidInvoices.reduce((sum, inv) => {
+      return sum + (inv.finalAmount ?? inv.totalAmount ?? 0);
+    }, 0);
+
+    // Tìm invoice của tháng đích
+    const currentMonthInvoices = allInvoices.filter((inv) => {
+      return inv.month === targetMonth && inv.year === targetYear;
+    });
+
+    const detailInfo = {
+      studentName: student["Họ và tên"] || student["Tên học sinh"] || (student as any)?.name,
+      studentId,
+      targetMonth: targetMonth + 1, // Convert to 1-indexed for display
+      targetYear,
+      calculatedDebt: breakdown.total, // Nợ tính từ các tháng trước
+      savedDebt: savedDebtFromInvoice, // Nợ đã lưu trong database
+      totalDebt: savedDebtFromInvoice !== null ? savedDebtFromInvoice : breakdown.total, // Nợ hiển thị (giống logic trong bảng)
+      debtBreakdown: breakdown.items,
+      currentMonthInvoices: currentMonthInvoices.map((inv) => ({
+        id: inv.id,
+        month: (inv.month ?? 0) + 1,
+        year: inv.year ?? 0,
+        amount: inv.finalAmount ?? inv.totalAmount ?? 0,
+        status: inv.status,
+        debt: inv.debt,
+      })),
+      previousInvoices: {
+        total: previousInvoices.length,
+        unpaid: unpaidInvoices.length,
+        paid: paidInvoices.length,
+        unpaidList: unpaidInvoices.map((inv) => ({
+          id: inv.id,
+          month: (inv.month ?? 0) + 1,
+          year: inv.year ?? 0,
+          amount: inv.finalAmount ?? inv.totalAmount ?? 0,
+          status: inv.status,
+        })),
+        paidList: paidInvoices.map((inv) => ({
+          id: inv.id,
+          month: (inv.month ?? 0) + 1,
+          year: inv.year ?? 0,
+          amount: inv.finalAmount ?? inv.totalAmount ?? 0,
+          status: inv.status,
+        })),
+      },
+      totalUnpaidAmount: totalUnpaid,
+    };
+
+    // Log chi tiết
+    console.log("=".repeat(80));
+    console.log(`📊 TRA CỨU NỢ - ${detailInfo.studentName}`);
+    console.log(`📅 Tháng ${detailInfo.targetMonth}/${detailInfo.targetYear}`);
+    console.log("=".repeat(80));
+    console.log(`💰 NỢ TÍNH TOÁN (từ các tháng trước): ${detailInfo.calculatedDebt.toLocaleString("vi-VN")} đ`);
+    console.log(`💰 NỢ ĐÃ LƯU (trong database): ${detailInfo.savedDebt !== null ? detailInfo.savedDebt.toLocaleString("vi-VN") + " đ" : "Không có"}`);
+    console.log(`💰 TỔNG NỢ HIỂN THỊ (giống trong bảng): ${detailInfo.totalDebt.toLocaleString("vi-VN")} đ`);
+    console.log(`\n📋 Chi tiết nợ theo tháng (từ các tháng TRƯỚC tháng ${detailInfo.targetMonth}/${detailInfo.targetYear}):`);
+    if (detailInfo.debtBreakdown.length === 0) {
+      console.log("   ✅ Không có nợ từ các tháng trước");
+    } else {
+      detailInfo.debtBreakdown.forEach((item) => {
+        console.log(`   - Tháng ${item.month + 1}/${item.year}: ${item.amount.toLocaleString("vi-VN")} đ`);
+      });
+    }
+    console.log(`\n📄 Invoice của tháng ${detailInfo.targetMonth}/${detailInfo.targetYear}:`);
+    if (detailInfo.currentMonthInvoices.length === 0) {
+      console.log("   (Không có invoice)");
+    } else {
+      detailInfo.currentMonthInvoices.forEach((inv) => {
+        console.log(`   - Invoice ${inv.id}: ${inv.amount.toLocaleString("vi-VN")} đ, Status: ${inv.status}, Debt đã lưu: ${inv.debt !== undefined && inv.debt !== null ? inv.debt.toLocaleString("vi-VN") + " đ" : "Không có"}`);
+      });
+    }
+    console.log(`\n📄 Invoice trước tháng ${detailInfo.targetMonth}/${detailInfo.targetYear}:`);
+    console.log(`   - Tổng số: ${detailInfo.previousInvoices.total}`);
+    console.log(`   - Chưa thanh toán: ${detailInfo.previousInvoices.unpaid}`);
+    console.log(`   - Đã thanh toán: ${detailInfo.previousInvoices.paid}`);
+    console.log(`\n💸 Danh sách invoice CHƯA THANH TOÁN:`);
+    if (detailInfo.previousInvoices.unpaidList.length === 0) {
+      console.log("   ✅ Không có");
+    } else {
+      detailInfo.previousInvoices.unpaidList.forEach((inv) => {
+        console.log(`   - Invoice ${inv.id}: Tháng ${inv.month}/${inv.year} - ${inv.amount.toLocaleString("vi-VN")} đ`);
+      });
+    }
+    console.log(`\n✅ Danh sách invoice ĐÃ THANH TOÁN:`);
+    if (detailInfo.previousInvoices.paidList.length === 0) {
+      console.log("   (Không có)");
+    } else {
+      detailInfo.previousInvoices.paidList.forEach((inv) => {
+        console.log(`   - Invoice ${inv.id}: Tháng ${inv.month}/${inv.year} - ${inv.amount.toLocaleString("vi-VN")} đ`);
+      });
+    }
+    console.log("=".repeat(80));
+
+    // Hiển thị modal với thông tin chi tiết
+    Modal.info({
+      title: `Tra cứu nợ - ${detailInfo.studentName}`,
+      width: 800,
+      content: (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>Tháng tra cứu: </Text>
+            <Text>{detailInfo.targetMonth}/{detailInfo.targetYear}</Text>
+          </div>
+          <div style={{ marginBottom: 16, padding: 12, background: "#f0f0f0", borderRadius: 4 }}>
+            <div style={{ marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 16, color: detailInfo.totalDebt > 0 ? "#ff4d4f" : "#52c41a" }}>
+                TỔNG NỢ HIỂN THỊ (giống trong bảng): {detailInfo.totalDebt.toLocaleString("vi-VN")} đ
+              </Text>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 14 }}>
+              <Text type="secondary">- Nợ tính toán (từ các tháng trước): {detailInfo.calculatedDebt.toLocaleString("vi-VN")} đ</Text><br />
+              <Text type="secondary">- Nợ đã lưu (trong database): {detailInfo.savedDebt !== null ? detailInfo.savedDebt.toLocaleString("vi-VN") + " đ" : "Không có"}</Text>
+            </div>
+          </div>
+          
+          {detailInfo.currentMonthInvoices.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Text strong>Invoice của tháng {detailInfo.targetMonth}/{detailInfo.targetYear}:</Text>
+              <ul style={{ marginTop: 8 }}>
+                {detailInfo.currentMonthInvoices.map((inv, idx) => (
+                  <li key={idx}>
+                    Invoice {inv.id}: <Text strong>{inv.amount.toLocaleString("vi-VN")} đ</Text>
+                    <Text type="secondary" style={{ marginLeft: 8 }}>(Status: {inv.status})</Text>
+                    {inv.debt !== undefined && inv.debt !== null && (
+                      <Text type="secondary" style={{ marginLeft: 8 }}>Debt đã lưu: {inv.debt.toLocaleString("vi-VN")} đ</Text>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>Chi tiết nợ theo tháng:</Text>
+            {detailInfo.debtBreakdown.length === 0 ? (
+              <div style={{ marginTop: 8, color: "#52c41a" }}>✅ Không có nợ</div>
+            ) : (
+              <ul style={{ marginTop: 8 }}>
+                {detailInfo.debtBreakdown.map((item, idx) => (
+                  <li key={idx}>
+                    Tháng {item.month + 1}/{item.year}: <Text strong>{item.amount.toLocaleString("vi-VN")} đ</Text>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <Text strong>Thống kê invoice trước tháng {detailInfo.targetMonth}/{detailInfo.targetYear}:</Text>
+            <div style={{ marginTop: 8 }}>
+              <Text>- Tổng số: {detailInfo.previousInvoices.total}</Text><br />
+              <Text>- Chưa thanh toán: <Text strong style={{ color: "#ff4d4f" }}>{detailInfo.previousInvoices.unpaid}</Text></Text><br />
+              <Text>- Đã thanh toán: <Text strong style={{ color: "#52c41a" }}>{detailInfo.previousInvoices.paid}</Text></Text>
+            </div>
+          </div>
+
+          {detailInfo.previousInvoices.unpaidList.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <Text strong style={{ color: "#ff4d4f" }}>Danh sách invoice CHƯA THANH TOÁN:</Text>
+              <ul style={{ marginTop: 8 }}>
+                {detailInfo.previousInvoices.unpaidList.map((inv, idx) => (
+                  <li key={idx}>
+                    Tháng {inv.month}/{inv.year}: <Text strong>{inv.amount.toLocaleString("vi-VN")} đ</Text>
+                    <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>(ID: {inv.id})</Text>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ),
+    });
+
+    return detailInfo;
   };
 
   // Generate VietQR URL with hardcoded bank info for students
@@ -4148,18 +4685,33 @@ const InvoicePage = () => {
         width: 130,
         render: (_: any, record: GroupedStudentInvoice) => {
           // Nợ học phí = đọc từ database đã lưu, nếu không có thì tính toán
-          let debt: number | null = null;
+          let savedDebt: number | null = null;
+          
           // Kiểm tra trong từng invoice của student có debt đã lưu không
           record.invoices.forEach((inv) => {
             const invoiceData = studentInvoiceStatus[inv.id];
             if (typeof invoiceData === "object" && invoiceData.debt !== undefined && invoiceData.debt !== null) {
-              debt = invoiceData.debt; // Lấy debt đã lưu
+              savedDebt = invoiceData.debt; // Lấy debt đã lưu
             }
           });
-          // Nếu không có debt đã lưu, tính toán từ các tháng trước
-          if (debt === null) {
-            debt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
+          
+          // Tính toán debt từ các tháng trước (luôn tính để đảm bảo chính xác)
+          const calculatedDebt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
+          
+          // Ưu tiên: Nếu có debt đã lưu và > 0, dùng debt đã lưu
+          // Nếu debt đã lưu = 0 nhưng calculated > 0, dùng calculated (có thể có invoice mới chưa được cập nhật)
+          // Nếu không có debt đã lưu, dùng calculated
+          let debt = savedDebt !== null ? savedDebt : calculatedDebt;
+          
+          // Nếu saved debt = 0 nhưng calculated > 0, có thể có invoice mới chưa được cập nhật
+          // Trong trường hợp này, ưu tiên calculated để đảm bảo hiển thị đúng
+          if (savedDebt === 0 && calculatedDebt > 0) {
+            debt = calculatedDebt;
           }
+          
+          // Đảm bảo debt là số (không phải null)
+          debt = debt ?? 0;
+          
           return (
             <Text strong style={{ color: debt > 0 ? "#ff4d4f" : "#52c41a", fontSize: "14px" }}>
               {debt.toLocaleString("vi-VN")} đ
@@ -5110,6 +5662,30 @@ const InvoicePage = () => {
           </Card>
         </Col>
       </Row>
+
+      {/* Update debt button and lookup */}
+      <div className="mb-4">
+        <Space>
+          <Button
+            type="default"
+            icon={<EditOutlined />}
+            onClick={updateDebtForAllInvoices}
+          >
+            Cập nhật công nợ cho tất cả phiếu thu
+          </Button>
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            onClick={() => {
+              // Tra cứu nợ của Việt Anh tháng 1/2026
+              // Tháng 1 = index 0, năm 2026
+              lookupStudentDebt("Việt Anh", 0, 2026);
+            }}
+          >
+            Tra cứu nợ Việt Anh T1/2026
+          </Button>
+        </Space>
+      </div>
 
       {/* Bulk delete button */}
       {selectedRowKeys.length > 0 && (
