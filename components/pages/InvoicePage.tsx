@@ -1,6 +1,15 @@
-import WrapperContent from "@/components/WrapperContent";
-import { DATABASE_URL_BASE, database } from "@/firebase";
-import { ref, onValue, update, remove, set, get } from "firebase/database";
+﻿import WrapperContent from "@/components/WrapperContent";
+
+import {
+  supabaseGetAll,
+  supabaseGetById,
+  supabaseSet,
+  supabaseUpdate,
+  supabaseRemove,
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+  convertToSupabaseFormat,
+} from "@/utils/supabaseHelpers";
 import { subjectMap, subjectOptions } from "@/utils/selectOptions";
 import {
   Tabs,
@@ -323,18 +332,65 @@ const InvoicePage = () => {
 
   // Load payment status from Firebase
   useEffect(() => {
-    const studentInvoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
-    const teacherSalariesRef = ref(database, "datasheet/Phiếu_lương_giáo_viên");
+    // Load from Supabase phieu_thu_hoc_phi_chi_tiet
+    // Load teacher salaries from Supabase
 
-    const unsubscribeStudents = onValue(studentInvoicesRef, (snapshot) => {
-      const data = snapshot.val();
+        const unsubscribeStudents = supabaseOnValue("datasheet/Phiáº¿u_thu_há»c_phÃ­_chi_tiáº¿t", (data) => {
       if (data) {
-        setStudentInvoiceStatus(data);
+        // Group invoices by studentId-month-year
+        const groupedInvoices: Record<string, any> = {};
+        Object.entries(data).forEach(([id, invoiceDetail]: [string, any]) => {
+          const studentId = invoiceDetail.studentId || invoiceDetail.student_id || "";
+          const month = invoiceDetail.month !== undefined ? invoiceDetail.month : 0;
+          const year = invoiceDetail.year !== undefined ? invoiceDetail.year : 0;
+          const groupKey = `${studentId}-${month}-${year}`;
+          
+          if (!groupedInvoices[groupKey]) {
+            groupedInvoices[groupKey] = {
+              id: groupKey,
+              studentId,
+              studentName: invoiceDetail.studentName || invoiceDetail.student_name || "",
+              studentCode: invoiceDetail.studentCode || invoiceDetail.student_code || "",
+              month,
+              year,
+              subjects: [],
+              totalSessions: 0,
+              totalAmount: 0,
+              discount: 0,
+              finalAmount: 0,
+              status: "unpaid",
+            };
+          }
+          
+          const existing = groupedInvoices[groupKey];
+          existing.subjects.push({
+            subject: invoiceDetail.subject || "",
+            classId: invoiceDetail.classId || invoiceDetail.class_id || "",
+            className: invoiceDetail.className || invoiceDetail.class_name || "",
+            classCode: invoiceDetail.classCode || invoiceDetail.class_code || "",
+            pricePerSession: invoiceDetail.pricePerSession || invoiceDetail.price_per_session || 0,
+            totalSessions: invoiceDetail.totalSessions || invoiceDetail.total_sessions || 0,
+            totalAmount: invoiceDetail.totalAmount || invoiceDetail.total_amount || 0,
+            discount: invoiceDetail.discount || 0,
+            finalAmount: invoiceDetail.finalAmount || invoiceDetail.final_amount || 0,
+            status: invoiceDetail.status || "unpaid",
+          });
+          
+          existing.totalSessions += invoiceDetail.totalSessions || invoiceDetail.total_sessions || 0;
+          existing.totalAmount += invoiceDetail.totalAmount || invoiceDetail.total_amount || 0;
+          existing.discount += invoiceDetail.discount || 0;
+          existing.finalAmount += invoiceDetail.finalAmount || invoiceDetail.final_amount || 0;
+          
+          if (invoiceDetail.status === "paid") {
+            existing.status = "paid";
+          }
+        });
+        
+        setStudentInvoiceStatus(groupedInvoices);
       }
     });
 
-    const unsubscribeTeachers = onValue(teacherSalariesRef, (snapshot) => {
-      const data = snapshot.val();
+        const unsubscribeTeachers = supabaseOnValue("datasheet/Phiếu_lương_giáo_viên", (data) => {
       if (data) {
         setTeacherSalaryStatus(data);
       }
@@ -371,104 +427,90 @@ const InvoicePage = () => {
       try {
         setLoading(true);
 
-        // Fetch students
-        const studentsRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`
-        );
-        const studentsData = await studentsRes.json();
-        if (studentsData) {
-          setStudents(
-            Object.entries(studentsData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch students from Supabase
+        const studentsData = await supabaseGetAll("datasheet/Học_sinh");
+        if (studentsData && typeof studentsData === 'object') {
+          const studentsArray = Object.entries(studentsData).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          setStudents(studentsArray);
         }
 
-        // Fetch teachers
-        const teachersRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn.json`
-        );
-        const teachersData = await teachersRes.json();
-        if (teachersData) {
-          setTeachers(
-            Object.entries(teachersData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch teachers from Supabase
+        const teachersData = await supabaseGetAll("datasheet/Giáo_viên");
+        if (teachersData && typeof teachersData === 'object') {
+          const teachersArray = Object.entries(teachersData).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "giao_vien");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          setTeachers(teachersArray);
         }
 
-        // Fetch attendance sessions
-        const sessionsRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/%C4%90i%E1%BB%83m_danh_sessions.json`
-        );
-        const sessionsData = await sessionsRes.json();
-        if (sessionsData) {
-          setSessions(
-            Object.entries(sessionsData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch attendance sessions from Supabase
+        const sessionsData = await supabaseGetAll("datasheet/Điểm_danh_sessions");
+        if (sessionsData && typeof sessionsData === 'object') {
+          const sessionsArray = Object.entries(sessionsData).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          setSessions(sessionsArray);
         }
 
-        // Fetch courses
-        const coursesRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Kh%C3%B3a_h%E1%BB%8Dc.json`
-        );
-        const coursesData = await coursesRes.json();
-        if (coursesData) {
-          setCourses(
-            Object.entries(coursesData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch courses from Supabase
+        const coursesData = await supabaseGetAll("datasheet/Khóa_học");
+        if (coursesData && typeof coursesData === 'object') {
+          const coursesArray = Object.entries(coursesData).map(([key, value]: [string, any]) => ({
+            id: key,
+            ...value,
+          }));
+          setCourses(coursesArray);
         }
 
-        // Fetch classes
-        const classesRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/L%E1%BB%9Bp_h%E1%BB%8Dc.json`
-        );
-        const classesData = await classesRes.json();
-        if (classesData) {
-          setClasses(
-            Object.entries(classesData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch classes from Supabase
+        const classesData = await supabaseGetAll("datasheet/Lớp_học");
+        if (classesData && typeof classesData === 'object') {
+          const classesArray = Object.entries(classesData).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lop_hoc");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          setClasses(classesArray);
         }
 
-        // Fetch tuition fees (Học_phí_riêng)
-        const tuitionRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Học_phí_riêng.json`
-        );
-        const tuitionData = await tuitionRes.json();
-        if (tuitionData) {
+        // Fetch tuition fees (Học_phí_riêng) from Supabase
+        const tuitionData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
+        if (tuitionData && typeof tuitionData === 'object') {
           const tuitionMap: Record<string, number | null> = {};
           Object.values(tuitionData).forEach((item: any) => {
-            if (item && item.studentCode && item.classCode) {
-              const key = `${item.studentCode}-${item.classCode}`;
-              tuitionMap[key] = item.tuitionFee;
+            const converted = convertFromSupabaseFormat(item, "lop_hoc_hoc_sinh");
+            if (converted && converted.studentCode && converted.classCode) {
+              const key = `${converted.studentCode}-${converted.classCode}`;
+              tuitionMap[key] = converted.hocPhiRieng || null;
             }
           });
           setTuitionFees(tuitionMap);
         }
 
-        // Fetch timetable entries (Thời_khoá_biểu)
-        const timetableRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Th%E1%BB%9Di_kho%C3%A1_bi%E1%BB%83u.json`
-        );
-        const timetableData = await timetableRes.json();
-        if (timetableData) {
-          setTimetableEntries(
-            Object.entries(timetableData).map(([id, data]: [string, any]) => ({
-              id,
-              ...data,
-            }))
-          );
+        // Fetch timetable entries from Supabase
+        const timetableData = await supabaseGetAll("datasheet/Thời_khoá_biểu");
+        if (timetableData && typeof timetableData === 'object') {
+          const timetableArray = Object.entries(timetableData).map(([key, value]: [string, any]) => ({
+            id: key,
+            ...value,
+          }));
+          setTimetableEntries(timetableArray);
         }
 
         setLoading(false);
@@ -1199,7 +1241,7 @@ const InvoicePage = () => {
           
           for (const invoiceId of selectedPaidRowKeys) {
             const invoiceIdStr = String(invoiceId);
-            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceIdStr}`);
+            
             const invoiceSnapshot = await get(invoiceRef);
             
             if (invoiceSnapshot.exists()) {
@@ -1243,96 +1285,6 @@ const InvoicePage = () => {
     });
   };
 
-  // Auto-update debt for all invoices that don't have debt saved
-  const updateDebtForAllInvoices = async () => {
-    try {
-      message.loading({ content: "Đang cập nhật công nợ cho tất cả phiếu thu...", key: "updateDebt", duration: 0 });
-      
-      const updatePromises: Promise<void>[] = [];
-      let updatedCount = 0;
-      
-      // Get all invoices from Firebase
-      const invoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
-      const snapshot = await get(invoicesRef);
-      const allInvoices = snapshot.val() || {};
-      
-      // Helper function to calculate debt from all invoices
-      const calculateDebtFromInvoices = (studentId: string, currentMonth: number, currentYear: number, invoices: Record<string, any>): number => {
-        let totalDebt = 0;
-        
-        Object.entries(invoices).forEach(([key, invoice]) => {
-          if (!invoice || typeof invoice !== "object") return;
-          
-          // Only consider invoices for the current student
-          if (invoice.studentId !== studentId) return;
-          
-          const invoiceMonth = invoice.month ?? null;
-          const invoiceYear = invoice.year ?? null;
-          if (invoiceMonth === null || invoiceYear === null) return;
-          
-          // Only consider months strictly before the current month/year
-          // currentMonth is 0-indexed (0=Jan, 11=Dec)
-          const isBeforeCurrentMonth = invoiceYear < currentYear || 
-            (invoiceYear === currentYear && invoiceMonth < currentMonth);
-          
-          if (isBeforeCurrentMonth) {
-            const status = invoice.status || "unpaid";
-            // Only count unpaid invoices
-            if (status !== "paid") {
-              const amount = invoice.finalAmount ?? invoice.totalAmount ?? 0;
-              totalDebt += amount;
-            }
-          }
-        });
-        
-        return totalDebt;
-      };
-      
-      Object.entries(allInvoices).forEach(([invoiceId, invoiceData]: [string, any]) => {
-        if (!invoiceData || typeof invoiceData !== "object") return;
-        
-        const studentId = invoiceData.studentId;
-        const month = invoiceData.month ?? null;
-        const year = invoiceData.year ?? null;
-        
-        if (!studentId || month === null || year === null) return;
-        
-        // Check if debt is already saved
-        const hasDebt = invoiceData.debt !== undefined && invoiceData.debt !== null;
-        
-        if (!hasDebt) {
-          // Calculate debt for this invoice from all invoices
-          const debt = calculateDebtFromInvoices(studentId, month, year, allInvoices);
-          
-          // Update invoice with calculated debt
-          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
-          updatePromises.push(
-            update(invoiceRef, { debt: debt }).then(() => {
-              updatedCount++;
-            })
-          );
-        }
-      });
-      
-      await Promise.all(updatePromises);
-      
-      message.success({ 
-        content: `Đã cập nhật công nợ cho ${updatedCount} phiếu thu`, 
-        key: "updateDebt",
-        duration: 3 
-      });
-      
-      // Refresh data
-      setRefreshTrigger((prev) => prev + 1);
-    } catch (error) {
-      console.error("Error updating debt for all invoices:", error);
-      message.error({ 
-        content: "Lỗi khi cập nhật công nợ", 
-        key: "updateDebt",
-        duration: 3 
-      });
-    }
-  };
 
   // Helper function to update debt for invoices after a deleted invoice
   const updateDebtForLaterInvoices = async (
@@ -1356,7 +1308,7 @@ const InvoicePage = () => {
         
         if (isAfterDeleted && data.debt !== undefined) {
           // Xóa trường debt để tự tính lại từ getStudentDebtBreakdown
-          const updateRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+          
           updatePromises.push(update(updateRef, { debt: null }));
         }
       }
@@ -1417,14 +1369,12 @@ const InvoicePage = () => {
           message.loading({ content: "Đang reset và tạo lại invoice từ điểm danh...", key: "resetInvoices", duration: 0 });
           
           // Step 1: Lấy tất cả invoice hiện tại
-          const invoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
-          const snapshot = await get(invoicesRef);
-          const allInvoices = snapshot.val() || {};
+          const allInvoices = await supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết") || {};
           
           // Step 2: Xóa tất cả invoice
           message.loading({ content: `Đang xóa ${Object.keys(allInvoices).length} invoice cũ...`, key: "resetInvoices" });
           const deletePromises = Object.keys(allInvoices).map((key) => {
-            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+            
             return remove(invoiceRef);
           });
           await Promise.all(deletePromises);
@@ -1569,7 +1519,7 @@ const InvoicePage = () => {
             invoice.debt = debt;
             
             // Create invoice in Firebase
-            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceKey}`);
+            
             createPromises.push(
               set(invoiceRef, invoice).then(() => {
                 createdCount++;
@@ -1631,7 +1581,7 @@ const InvoicePage = () => {
 
           if (invoicesToDelete.length > 0) {
             const deleteInvoicePromises = invoicesToDelete.map((key) => {
-              const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+              
               return remove(invoiceRef);
             });
             await Promise.all(deleteInvoicePromises);
@@ -1656,7 +1606,7 @@ const InvoicePage = () => {
 
           if (sessionsToDelete.length > 0) {
             const deleteSessionPromises = sessionsToDelete.map((sessionId) => {
-              const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
+              
               return remove(sessionRef);
             });
             await Promise.all(deleteSessionPromises);
@@ -1936,8 +1886,7 @@ const InvoicePage = () => {
       // Calculate finalAmount: Thành tiền = Tổng tiền - Miễn giảm
       const newFinalAmount = Math.max(0, newTotalAmount - discount);
 
-      const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
-
+      
       // Sử dụng totalSessions tùy chỉnh nếu có, nếu không giữ nguyên từ database
       const currentTotalSessions = customTotalSessions !== undefined
         ? customTotalSessions
@@ -2042,7 +1991,6 @@ const InvoicePage = () => {
         }
       });
 
-      const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
       
       // Reset về giá trị gốc: giá gốc, discount = 0, debt = 0, totalSessions giữ nguyên
       const originalTotalSessions = typeof currentData === "object" && currentData.totalSessions !== undefined
@@ -2172,8 +2120,7 @@ const InvoicePage = () => {
       const totalHours = Math.floor(totalMinutes / 60);
       const remainingMinutes = totalMinutes % 60;
 
-      const salaryRef = ref(database, `datasheet/Phiếu_lương_giáo_viên/${salaryId}`);
-
+      
       const updateData = {
         ...(typeof currentData === "object" ? currentData : { status: currentStatus || "unpaid" }),
         sessions: sessionsToUse,
@@ -2477,8 +2424,7 @@ const InvoicePage = () => {
   // Function to update invoice data from editable form
   const updateInvoiceFromEditableForm = async (updatedData: any) => {
     try {
-      const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${updatedData.id}`);
-
+      
       // Get current data first
       const currentData = studentInvoiceStatus[updatedData.id];
       if (typeof currentData === "object" && currentData !== null) {
@@ -2529,7 +2475,7 @@ const InvoicePage = () => {
       ),
       footer: (
         <Space>
-          <Button onClick={() => modal.destroy()}>Đóng</Button>
+        <Button onClick={() => modal.destroy()}>Đóng</Button>
           <Button
             icon={<PrinterOutlined />}
             onClick={() => {
@@ -5037,7 +4983,7 @@ const InvoicePage = () => {
         width: 220,
         render: (_: any, record: StudentInvoice) => (
           <Space>
-            <Button
+          <Button
               size="small"
               icon={<EyeOutlined />}
               onClick={() => viewStudentInvoice(record)}
@@ -5663,36 +5609,13 @@ const InvoicePage = () => {
         </Col>
       </Row>
 
-      {/* Update debt button and lookup */}
-      <div className="mb-4">
-        <Space>
-          <Button
-            type="default"
-            icon={<EditOutlined />}
-            onClick={updateDebtForAllInvoices}
-          >
-            Cập nhật công nợ cho tất cả phiếu thu
-          </Button>
-          <Button
-            type="primary"
-            icon={<SearchOutlined />}
-            onClick={() => {
-              // Tra cứu nợ của Việt Anh tháng 1/2026
-              // Tháng 1 = index 0, năm 2026
-              lookupStudentDebt("Việt Anh", 0, 2026);
-            }}
-          >
-            Tra cứu nợ Việt Anh T1/2026
-          </Button>
-        </Space>
-      </div>
+      {/* Update debt button */}
 
       {/* Bulk delete button */}
       {selectedRowKeys.length > 0 && (
         <div className="mb-4">
-          <Space>
-            <Button
-              type="primary"
+          <Button
+            type="primary"
               icon={<PrinterOutlined />}
               onClick={handleBulkPrintInvoices}
             >
@@ -5705,9 +5628,8 @@ const InvoicePage = () => {
               onClick={handleDeleteMultipleInvoices}
             >
               Xóa {selectedRowKeys.length} phiếu đã chọn
-            </Button>
-          </Space>
-        </div>
+          </Button>
+      </div>
       )}
 
       {/* Table */}
@@ -6655,3 +6577,4 @@ const InvoicePage = () => {
 };
 
 export default InvoicePage;
+

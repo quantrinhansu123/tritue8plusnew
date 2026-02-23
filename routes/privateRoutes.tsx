@@ -17,6 +17,7 @@ import StudentProfilePage from "@/components/pages/StudentProfilePage";
 import TeacherMonthlyReport from "@/components/pages/TeacherMonthlyReport";
 import AdminMonthlyReportReview from "@/components/pages/AdminMonthlyReportReview";
 import StaffAttendance from "@/components/pages/StaffAttendance";
+import ReportMigrationPage from "@/components/pages/ReportMigrationPage";
 import AdminLayout from "@/layouts/AdminLayout";
 import Authoriation from "@/routes/Authoriation";
 import { Empty } from "antd/lib";
@@ -135,6 +136,14 @@ const privateRoutes = [
         element: (
           <Authoriation>
             <AdminMonthlyReportReview />
+          </Authoriation>
+        ),
+      },
+      {
+        path: "report-migration",
+        element: (
+          <Authoriation>
+            <ReportMigrationPage />
           </Authoriation>
         ),
       },

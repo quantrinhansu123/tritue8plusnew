@@ -1,45 +1,87 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue, push, set, update, remove, get } from 'firebase/database';
-import { database } from '../firebase';
 import { Class } from '../types';
-import { toast } from 'react-toastify';
 import { message } from 'antd';
+import { 
+  supabaseGetAll, 
+  supabaseSet, 
+  supabaseUpdate, 
+  supabaseRemove,
+  supabaseOnValue,
+  convertToSupabaseFormat,
+  convertFromSupabaseFormat
+} from '../utils/supabaseHelpers';
+import { supabaseAdmin } from '@/supabase';
 
 export const useClasses = () => {
     const [classes, setClasses] = useState<Class[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const classesRef = ref(database, 'datasheet/Lớp_học');
+        // Load initial data
+        const loadClasses = async () => {
+            try {
+                const data = await supabaseGetAll<Class>('datasheet/Lớp_học');
+                if (data && typeof data === 'object') {
+                    // Convert from Supabase format to Firebase format
+                    const classList = Object.entries(data).map(([id, value]: [string, any]) => {
+                        const converted = convertFromSupabaseFormat(value, "lop_hoc");
+                        return {
+                            id,
+                            ...converted,
+                        };
+                    });
+                    console.log("📚 Classes loaded from Supabase:", classList.length);
+                    setClasses(classList);
+                } else {
+                    console.warn("⚠️ No classes data from Supabase");
+                    setClasses([]);
+                }
+                setLoading(false);
+            } catch (error) {
+                console.error('Error fetching classes:', error);
+                message.error('Không thể tải danh sách lớp học');
+                setLoading(false);
+            }
+        };
 
-        const unsubscribe = onValue(classesRef, (snapshot) => {
-            const data = snapshot.val();
-            if (data) {
-                const classList = Object.entries(data).map(([id, value]) => ({
-                    id,
-                    ...(value as Omit<Class, 'id'>)
-                }));
+        loadClasses();
+
+        // Subscribe to real-time updates
+        const unsubscribe = supabaseOnValue('datasheet/Lớp_học', (data) => {
+            if (data && typeof data === 'object') {
+                // Convert from Supabase format to Firebase format
+                const classList = Object.entries(data).map(([id, value]: [string, any]) => {
+                    const converted = convertFromSupabaseFormat(value, "lop_hoc");
+                    return {
+                        id,
+                        ...converted,
+                    };
+                });
                 setClasses(classList);
             } else {
                 setClasses([]);
             }
             setLoading(false);
-        }, (error) => {
-            console.error('Error fetching classes:', error);
-            message.error('Không thể tải danh sách lớp học');
-            setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => {
+            if (unsubscribe) unsubscribe();
+        };
     }, []);
 
     const addClass = async (classData: Omit<Class, 'id'>) => {
         try {
-            const classesRef = ref(database, 'datasheet/Lớp_học');
-            const newClassRef = push(classesRef);
-            await set(newClassRef, classData);
+            // Generate a new ID (similar to Firebase push)
+            const newId = `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            const classWithId = {
+                id: newId,
+                ...classData,
+            };
+
+            await supabaseSet('datasheet/Lớp_học', classWithId, { upsert: true });
             message.success('Thêm lớp học thành công');
-            return newClassRef.key;
+            return newId;
         } catch (error) {
             console.error('Error adding class:', error);
             message.error('Không thể thêm lớp học');
@@ -49,8 +91,7 @@ export const useClasses = () => {
 
     const updateClass = async (classId: string, updates: Partial<Omit<Class, 'id'>>) => {
         try {
-            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-            await update(classRef, updates);
+            await supabaseUpdate('datasheet/Lớp_học', classId, updates);
             message.success('Cập nhật lớp học thành công');
         } catch (error) {
             console.error('Error updating class:', error);
@@ -61,8 +102,7 @@ export const useClasses = () => {
 
     const deleteClass = async (classId: string) => {
         try {
-            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-            await remove(classRef);
+            await supabaseRemove('datasheet/Lớp_học', classId);
             message.success('Xóa lớp học thành công');
         } catch (error) {
             console.error('Error deleting class:', error);
@@ -73,25 +113,40 @@ export const useClasses = () => {
 
     const addStudentToClass = async (classId: string, studentId: string, studentName: string, enrollmentDate?: string) => {
         try {
-            // Fetch fresh class data to avoid stale state
-            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-            const snapshot = await get(classRef);
-            const classData = snapshot.val();
-            if (!classData) throw new Error('Class not found');
+            // Get current class data
+            const classData = await supabaseGetAll<Class>('datasheet/Lớp_học');
+            if (!classData || !classData[classId]) {
+                throw new Error('Class not found');
+            }
 
-            const updatedStudentIds = [...(classData['Student IDs'] || []), studentId];
-            const updatedStudentNames = [...(classData['Học sinh'] || []), studentName];
+            const currentClass = classData[classId];
+            const updatedStudentIds = [...(currentClass['Student IDs'] || []), studentId];
+            const updatedStudentNames = [...(currentClass['Học sinh'] || []), studentName];
             
             // Track enrollment date - use provided date or default to today
             const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-            const updatedEnrollments = { ...(classData['Student Enrollments'] || {}) };
+            const updatedEnrollments = { ...(currentClass['Student Enrollments'] || {}) };
             updatedEnrollments[studentId] = { enrollmentDate: dateToUse };
 
-            await updateClass(classId, {
+            // Update class in Supabase
+            await supabaseUpdate('datasheet/Lớp_học', classId, {
                 'Student IDs': updatedStudentIds,
                 'Học sinh': updatedStudentNames,
                 'Student Enrollments': updatedEnrollments
             });
+
+            // Also add/update in lop_hoc_hoc_sinh table
+            const enrollmentId = `${classId}-${studentId}`;
+            const studentCode = ''; // Will be filled from student data if available
+            await supabaseSet('datasheet/Lớp_học/Học_sinh', {
+                id: enrollmentId,
+                class_id: classId,
+                student_id: studentId,
+                student_name: studentName,
+                student_code: studentCode,
+                enrollment_date: dateToUse,
+                status: 'active',
+            }, { upsert: true });
         } catch (error) {
             console.error('Error adding student to class:', error);
             message.error('Không thể thêm học sinh vào lớp');
@@ -105,16 +160,16 @@ export const useClasses = () => {
         enrollmentDate?: string
     ) => {
         try {
-            // Fetch fresh class data to avoid stale state
-            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-            const snapshot = await get(classRef);
-            const classData = snapshot.val();
-            if (!classData) throw new Error('Class not found');
+            // Get current class data
+            const classData = await supabaseGetAll<Class>('datasheet/Lớp_học');
+            if (!classData || !classData[classId]) {
+                throw new Error('Class not found');
+            }
 
-            // Get current students
-            const currentStudentIds = classData['Student IDs'] || [];
-            const currentStudentNames = classData['Học sinh'] || [];
-            const currentEnrollments = classData['Student Enrollments'] || {};
+            const currentClass = classData[classId];
+            const currentStudentIds = currentClass['Student IDs'] || [];
+            const currentStudentNames = currentClass['Học sinh'] || [];
+            const currentEnrollments = currentClass['Student Enrollments'] || {};
 
             // Filter out students that are already in the class
             const newStudents = students.filter(s => !currentStudentIds.includes(s.id));
@@ -135,11 +190,28 @@ export const useClasses = () => {
                 updatedEnrollments[s.id] = { enrollmentDate: dateToUse };
             });
 
-            await updateClass(classId, {
+            // Update class in Supabase
+            await supabaseUpdate('datasheet/Lớp_học', classId, {
                 'Student IDs': updatedStudentIds,
                 'Học sinh': updatedStudentNames,
                 'Student Enrollments': updatedEnrollments
             });
+
+            // Also add/update in lop_hoc_hoc_sinh table
+            const enrollmentPromises = newStudents.map(async (student) => {
+                const enrollmentId = `${classId}-${student.id}`;
+                const studentCode = ''; // Will be filled from student data if available
+                await supabaseSet('datasheet/Lớp_học/Học_sinh', {
+                    id: enrollmentId,
+                    class_id: classId,
+                    student_id: student.id,
+                    student_name: student.name,
+                    student_code: studentCode,
+                    enrollment_date: dateToUse,
+                    status: 'active',
+                }, { upsert: true });
+            });
+            await Promise.all(enrollmentPromises);
 
             message.success(`Đã thêm ${newStudents.length} học sinh vào lớp (từ ngày ${dateToUse})`);
         } catch (error) {
@@ -151,25 +223,41 @@ export const useClasses = () => {
 
     const removeStudentFromClass = async (classId: string, studentId: string) => {
         try {
-            // Fetch fresh class data to avoid stale state
-            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-            const snapshot = await get(classRef);
-            const classData = snapshot.val();
-            if (!classData) throw new Error('Class not found');
+            // Get current class data
+            const classData = await supabaseGetAll<Class>('datasheet/Lớp_học');
+            if (!classData || !classData[classId]) {
+                throw new Error('Class not found');
+            }
 
-            const updatedStudentIds = (classData['Student IDs'] || []).filter((id: string) => id !== studentId);
-            const studentIndex = (classData['Student IDs'] || []).indexOf(studentId);
-            const updatedStudentNames = (classData['Học sinh'] || []).filter((_: string, index: number) => index !== studentIndex);
+            // Convert from Supabase format
+            const currentClassRaw = classData[classId];
+            const currentClass = convertFromSupabaseFormat(currentClassRaw, "lop_hoc");
+            
+            const updatedStudentIds = (currentClass['Student IDs'] || currentClass['student_ids'] || []).filter((id: string) => id !== studentId);
+            const studentIndex = (currentClass['Student IDs'] || currentClass['student_ids'] || []).indexOf(studentId);
+            const updatedStudentNames = (currentClass['Học sinh'] || currentClass['hoc_sinh'] || []).filter((_: string, index: number) => index !== studentIndex);
             
             // Also remove enrollment record for this student
-            const currentEnrollments = classData['Student Enrollments'] || {};
+            const currentEnrollments = currentClass['Student Enrollments'] || currentClass['student_enrollments'] || {};
             const { [studentId]: removed, ...remainingEnrollments } = currentEnrollments;
 
-            await updateClass(classId, {
+            // Convert to Supabase format before updating
+            const updateData = convertToSupabaseFormat({
                 'Student IDs': updatedStudentIds,
                 'Học sinh': updatedStudentNames,
                 'Student Enrollments': remainingEnrollments
+            }, "lop_hoc");
+
+            // Update class in Supabase
+            await supabaseUpdate('datasheet/Lớp_học', classId, updateData);
+
+            // Also update status in lop_hoc_hoc_sinh table to 'inactive'
+            const enrollmentId = `${classId}-${studentId}`;
+            await supabaseUpdate('datasheet/Lớp_học/Học_sinh', enrollmentId, {
+                status: 'inactive',
             });
+            
+            message.success('Đã xóa học sinh khỏi lớp');
         } catch (error) {
             console.error('Error removing student from class:', error);
             message.error('Không thể xóa học sinh khỏi lớp');

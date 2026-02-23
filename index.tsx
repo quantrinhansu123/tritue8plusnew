@@ -6,7 +6,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import AntdThemeContext from "@/contexts/AntdThemeContext";
 import "./index.css";
 import { ErrorBoundary } from "react-error-boundary";
-import { message, Result } from "antd/lib";
+import { App as AntdApp, message, Result } from "antd";
 import "@ant-design/v5-patch-for-react-19";
 
 const rootElement = document.getElementById("root");
@@ -36,9 +36,11 @@ root.render(
     >
       <BrowserRouter>
         <AntdThemeContext>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
+          <AntdApp>
+            <AuthProvider>
+              <App />
+            </AuthProvider>
+          </AntdApp>
         </AntdThemeContext>
       </BrowserRouter>
     </ErrorBoundary>

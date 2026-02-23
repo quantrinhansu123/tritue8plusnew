@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE } from "@/firebase";
+import { supabaseAdmin } from "@/supabase";
+import { supabaseGetAll, supabaseSet, supabaseRemove, supabaseOnValue, convertFromSupabaseFormat, convertToSupabaseFormat } from "@/utils/supabaseHelpers";
 import {
   Button,
   Input,
@@ -41,6 +43,7 @@ import {
   FileTextOutlined,
   DollarOutlined,
   StarOutlined,
+  SyncOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import WrapperContent from "@/components/WrapperContent";
@@ -94,7 +97,7 @@ const StarsInput: React.FC<{
   );
 };
 
-const STUDENT_LIST_URL = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`;
+// All student data now uses Supabase - these URLs are kept for Extension History and Stars (still using Firebase)
 const SCHEDULE_URL = `${DATABASE_URL_BASE}/datasheet/Th%E1%BB%9Di_kho%C3%A1_bi%E1%BB%83u.json`;
 const ATTENDANCE_SESSIONS_URL = `${DATABASE_URL_BASE}/datasheet/%C4%90i%E1%BB%83m_danh_sessions.json`;
 const EXTENSION_HISTORY_URL = `${DATABASE_URL_BASE}/datasheet/Gia_h%E1%BA%A1n.json`;
@@ -154,11 +157,14 @@ const StudentListView: React.FC = () => {
   const [dateRangeFilter, setDateRangeFilter] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [quickFilter, setQuickFilter] = useState<'month' | 'week' | 'year' | 'custom'>('month');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+  const [classFilter, setClassFilter] = useState<string[]>([]); // Filter by class IDs
+  const [gradeFilter, setGradeFilter] = useState<string[]>([]); // Filter by grades (Khối)
 
   // Stars editing states
   const [isEditStarsModalOpen, setEditStarsModalOpen] = useState(false);
   const [editingStarsStudent, setEditingStarsStudent] = useState<Student | null>(null);
   const [starsHistory, setStarsHistory] = useState<any[]>([]);
+  const [syncingStudents, setSyncingStudents] = useState(false);
   
 
   // Form instances
@@ -167,38 +173,55 @@ const StudentListView: React.FC = () => {
   const [editExtensionForm] = Form.useForm();
   const [editStarsForm] = Form.useForm();
 
-  // Fetch students
+  // Fetch students from Supabase
   useEffect(() => {
     const fetchStudents = async () => {
       try {
-        // Add cache-busting parameter
-        const response = await fetch(
-          `${STUDENT_LIST_URL}?_=${new Date().getTime()}`,
-          {
-            cache: "no-cache",
-          }
-        );
-        const data = await response.json();
-        if (data) {
-          const studentsArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
-          console.log("📚 Students fetched:", studentsArray.length);
+        setLoading(true);
+        // Fetch from Supabase
+        const data = await supabaseGetAll("datasheet/Học_sinh");
+        if (data && typeof data === 'object') {
+          const studentsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          console.log("📚 Students fetched from Supabase:", studentsArray.length);
           console.log("📊 Sample student data:", studentsArray[0]);
-          console.log(
-            "🔑 Student IDs:",
-            studentsArray.map((s) => ({ id: s.id, name: s["Họ và tên"] }))
-          );
           setStudents(studentsArray);
         } else {
-          console.warn("⚠️ No students data from Firebase");
+          console.warn("⚠️ No students data from Supabase");
+          setStudents([]);
         }
+        setLoading(false);
       } catch (error) {
         console.error("Error fetching students:", error);
+        setLoading(false);
       }
     };
     fetchStudents();
+
+    // Set up realtime subscription
+    const unsubscribe = supabaseOnValue("datasheet/Học_sinh", (data) => {
+      if (data && typeof data === 'object') {
+        const studentsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        setStudents(studentsArray);
+      } else {
+        setStudents([]);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Fetch attendance sessions (for calculating hours and sessions)
@@ -256,29 +279,26 @@ const StudentListView: React.FC = () => {
     fetchSchedule();
   }, [userProfile, currentUser]);
 
-  // Fetch extension history
+  // Fetch extension history from Supabase
   useEffect(() => {
     const fetchExtensionHistory = async () => {
       try {
-        const response = await fetch(
-          `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-          {
-            cache: "no-cache",
-          }
-        );
-        const data = await response.json();
-        if (data) {
-          const historyArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
+        const data = await supabaseGetAll("datasheet/Gia_hạn");
+        if (data && typeof data === 'object') {
+          const historyArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "gia_han");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
           // Sort by timestamp descending
           historyArray.sort(
             (a, b) =>
-              new Date(b.Timestamp || 0).getTime() -
-              new Date(a.Timestamp || 0).getTime()
+              new Date(b.Timestamp || b.timestamp || 0).getTime() -
+              new Date(a.Timestamp || a.timestamp || 0).getTime()
           );
-          console.log("📋 Extension history fetched:", historyArray.length);
+          console.log("📋 Extension history fetched from Supabase:", historyArray.length);
           setExtensionHistory(historyArray);
         }
       } catch (error) {
@@ -286,6 +306,31 @@ const StudentListView: React.FC = () => {
       }
     };
     fetchExtensionHistory();
+
+    // Set up realtime subscription
+    const unsubscribe = supabaseOnValue("datasheet/Gia_hạn", (data) => {
+      if (data && typeof data === 'object') {
+        const historyArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "gia_han");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        historyArray.sort(
+          (a, b) =>
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
+        );
+        setExtensionHistory(historyArray);
+      } else {
+        setExtensionHistory([]);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Fetch classes
@@ -327,19 +372,23 @@ const StudentListView: React.FC = () => {
           return;
         }
 
-        const data = await response.json();
-        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-          const historyArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
+        // Fetch from Supabase
+        const data = await supabaseGetAll("datasheet/Lịch_sử_sao_thưởng");
+        if (data && typeof data === 'object') {
+          const historyArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lich_su_sao_thuong");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
           // Sort by timestamp descending
           historyArray.sort(
             (a, b) =>
-              new Date(b.Timestamp || 0).getTime() -
-              new Date(a.Timestamp || 0).getTime()
+              new Date(b.Timestamp || b.timestamp || 0).getTime() -
+              new Date(a.Timestamp || a.timestamp || 0).getTime()
           );
-          console.log("⭐ Stars history fetched:", historyArray.length);
+          console.log("⭐ Stars history fetched from Supabase:", historyArray.length);
           setStarsHistory(historyArray);
         } else {
           console.log("⭐ No stars history data, initializing empty array");
@@ -352,6 +401,31 @@ const StudentListView: React.FC = () => {
       }
     };
     fetchStarsHistory();
+
+    // Set up realtime subscription
+    const unsubscribe = supabaseOnValue("datasheet/Lịch_sử_sao_thưởng", (data) => {
+      if (data && typeof data === 'object') {
+        const historyArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "lich_su_sao_thuong");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        historyArray.sort(
+          (a, b) =>
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
+        );
+        setStarsHistory(historyArray);
+      } else {
+        setStarsHistory([]);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
 
@@ -673,14 +747,41 @@ const StudentListView: React.FC = () => {
         };
       })
       .filter((student) => {
-        if (!searchTerm) return true;
-        const search = normalizeText(searchTerm);
-        return (
-          normalizeText(student["Họ và tên"] || "").includes(search) ||
-          normalizeText(student["Mã học sinh"] || "").includes(search) ||
-          normalizeText(student["Số điện thoại"] || "").includes(search) ||
-          normalizeText(student["Email"] || "").includes(search)
-        );
+        // Filter by search term
+        if (searchTerm) {
+          const search = normalizeText(searchTerm);
+          const matchSearch = 
+            normalizeText(student["Họ và tên"] || "").includes(search) ||
+            normalizeText(student["Mã học sinh"] || "").includes(search) ||
+            normalizeText(student["Số điện thoại"] || "").includes(search) ||
+            normalizeText(student["Email"] || "").includes(search);
+          if (!matchSearch) return false;
+        }
+
+        // Filter by grade (Khối)
+        if (gradeFilter.length > 0) {
+          const studentGrade = student["Khối"] || "";
+          if (!gradeFilter.includes(studentGrade)) {
+            return false;
+          }
+        }
+
+        // Filter by class - check if student is enrolled in any of the selected classes
+        if (classFilter.length > 0) {
+          const studentClassIds = classes
+            .filter((c) => (c["Student IDs"] || []).includes(student.id))
+            .map((c) => c.id);
+          
+          const hasMatchingClass = classFilter.some((classId) => 
+            studentClassIds.includes(classId)
+          );
+          
+          if (!hasMatchingClass) {
+            return false;
+          }
+        }
+
+        return true;
       });
   }, [
     students,
@@ -691,6 +792,9 @@ const StudentListView: React.FC = () => {
     starsHistory,
     userProfile,
     currentUser,
+    classes,
+    classFilter,
+    gradeFilter,
   ]);
 
   const handleStudentClick = (student: Student) => {
@@ -726,14 +830,10 @@ const StudentListView: React.FC = () => {
             return;
           }
 
-          const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${student.id}.json`;
-          const response = await fetch(url, {
-            method: "DELETE",
-          });
-          if (response.ok) {
-            setStudents(students.filter((s) => s.id !== student.id));
-            message.success("Xóa học sinh thành công!");
-          }
+          // Delete from Supabase
+          await supabaseRemove(`datasheet/Học_sinh/${student.id}`);
+          setStudents(students.filter((s) => s.id !== student.id));
+          message.success("Xóa học sinh thành công!");
         } catch (error) {
           console.error("Error deleting student:", error);
           message.error("Xóa học sinh thất bại. Vui lòng thử lại.");
@@ -762,10 +862,7 @@ const StudentListView: React.FC = () => {
           }
 
           for (const studentId of selectedRowKeys) {
-            const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-            await fetch(url, {
-              method: "DELETE",
-            });
+            await supabaseRemove(`datasheet/Học_sinh/${studentId}`);
           }
 
           setStudents(students.filter((s) => !selectedRowKeys.includes(s.id)));
@@ -801,26 +898,29 @@ const StudentListView: React.FC = () => {
 
         console.log("📤 Sending new student data:", dataWithoutId);
 
-        const response = await fetch(`${STUDENT_LIST_URL}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(dataWithoutId),
-        });
-
-        console.log(
-          "📡 Response status:",
-          response.status,
-          response.statusText
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          console.log("✅ Student added to Firebase:", data);
-          const newStudent = { id: data.name, ...dataWithoutId } as Student;
-          setStudents([...students, newStudent]);
-          setEditModalOpen(false);
-          setEditingStudent(null);
-          message.success("Thêm học sinh thành công!");
+        // Generate new ID if not provided
+        const newId = id || `student_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Convert to Supabase format
+        const supabaseData = convertToSupabaseFormat(dataWithoutId, "hoc_sinh");
+        supabaseData.id = newId;
+        
+        // Save to Supabase
+        const saveResult = await supabaseSet(`datasheet/Học_sinh/${newId}`, supabaseData);
+        if (!saveResult) {
+          message.error("❌ Không thể lưu học sinh vào Supabase. Kiểm tra Console (F12) để xem chi tiết lỗi.");
+          console.error("❌ Failed to save student. Data:", supabaseData);
+          return;
+        }
+        console.log("✅ Student added to Supabase:", newId);
+        
+        // Convert back to Firebase format for display
+        const convertedBack = convertFromSupabaseFormat(supabaseData, "hoc_sinh");
+        const newStudent = { id: newId, ...convertedBack } as Student;
+        setStudents([...students, newStudent]);
+        setEditModalOpen(false);
+        setEditingStudent(null);
+        message.success("Thêm học sinh thành công!");
 
           // If selected classes provided, add this student to those classes
           if (selectedClassIds && selectedClassIds.length > 0) {
@@ -864,17 +964,6 @@ const StudentListView: React.FC = () => {
               console.error("Error updating class membership for new student:", err);
             }
           }
-        } else {
-          const errorText = await response.text();
-          console.error(
-            "❌ Failed to add student. Status:",
-            response.status,
-            errorText
-          );
-          message.error(
-            `Xảy ra lỗi khi thêm học sinh. Trạng thái: ${response.status}\n${errorText}`
-          );
-        }
       } else {
         // Check if Hours Extended changed
         const oldHours = Number(editingStudent["Số giờ đã gia hạn"]) || 0;
@@ -892,16 +981,28 @@ const StudentListView: React.FC = () => {
           message.error("Bạn phải đăng nhập để cập nhật học sinh");
           return;
         }
-        const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentData.id}.json`;
-        console.log("📤 Updating student:", studentData.id, studentData);
-        const response = await fetch(url, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(studentData),
-        });
-
-        if (response.ok) {
-          console.log("✅ Student updated in Firebase successfully");
+        // Convert to Supabase format
+        const supabaseData = convertToSupabaseFormat(studentData, "hoc_sinh");
+        supabaseData.id = studentData.id;
+        
+        // Update in Supabase
+        try {
+          const updateResult = await supabaseSet(`datasheet/Học_sinh/${studentData.id}`, supabaseData);
+          if (!updateResult) {
+            message.error("❌ Không thể cập nhật học sinh trong Supabase. Kiểm tra Console (F12) để xem chi tiết lỗi.");
+            console.error("❌ Failed to update student. Data:", supabaseData);
+            return;
+          }
+        } catch (error: any) {
+          message.error(`❌ Lỗi khi cập nhật: ${error?.message || "Unknown error"}. Kiểm tra Console (F12) để xem chi tiết.`);
+          console.error("❌ Exception when updating student:", error);
+          return;
+        }
+        console.log("✅ Student updated in Supabase successfully");
+        
+        // Update local state
+        const updatedStudent = convertFromSupabaseFormat(supabaseData, "hoc_sinh");
+        setStudents(students.map(s => s.id === studentData.id ? { id: studentData.id, ...updatedStudent } as Student : s));
 
           // If Hours Extended changed, log it in Extension History
           if (hoursChanged) {
@@ -929,41 +1030,29 @@ const StudentListView: React.FC = () => {
             };
 
             try {
-              const logResponse = await fetch(EXTENSION_HISTORY_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(adjustmentLog),
-              });
+              // Save to Supabase
+              const supabaseLogData = convertToSupabaseFormat(adjustmentLog, "gia_han");
+              const logId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+              supabaseLogData.id = logId;
+              await supabaseSet(`datasheet/Gia_hạn/${logId}`, supabaseLogData);
+              console.log("✅ Adjustment logged to Supabase Extension History");
 
-              if (logResponse.ok) {
-                console.log("✅ Adjustment logged to Extension History");
-
-                // Refresh extension history
-                const refreshHistoryResponse = await fetch(
-                  `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-                  {
-                    cache: "no-cache",
-                  }
+              // Refresh extension history from Supabase
+              const refreshHistoryData = await supabaseGetAll("datasheet/Gia_hạn");
+              if (refreshHistoryData && typeof refreshHistoryData === 'object') {
+                const historyArray = Object.entries(refreshHistoryData).map(([key, value]: [string, any]) => {
+                  const converted = convertFromSupabaseFormat(value, "gia_han");
+                  return {
+                    id: key,
+                    ...converted,
+                  };
+                });
+                historyArray.sort(
+                  (a, b) =>
+                    new Date(b.Timestamp || b.timestamp || 0).getTime() -
+                    new Date(a.Timestamp || a.timestamp || 0).getTime()
                 );
-                const refreshHistoryData = await refreshHistoryResponse.json();
-                if (refreshHistoryData) {
-                  const historyArray = Object.keys(refreshHistoryData).map(
-                    (key) => ({
-                      id: key,
-                      ...refreshHistoryData[key],
-                    })
-                  );
-                  historyArray.sort(
-                    (a, b) =>
-                      new Date(b.Timestamp || 0).getTime() -
-                      new Date(a.Timestamp || 0).getTime()
-                  );
-                  setExtensionHistory(historyArray);
-                }
-              } else {
-                console.warn(
-                  "⚠️ Failed to log adjustment, but student updated successfully"
-                );
+                setExtensionHistory(historyArray);
               }
             } catch (logError) {
               console.error("❌ Error logging adjustment:", logError);
@@ -971,19 +1060,16 @@ const StudentListView: React.FC = () => {
             }
           }
 
-          // Refresh students from Firebase after update
-          const refetchResponse = await fetch(
-            `${STUDENT_LIST_URL}?_=${new Date().getTime()}`,
-            {
-              cache: "no-cache",
-            }
-          );
-          const refetchData = await refetchResponse.json();
-          if (refetchData) {
-            const studentsArray = Object.keys(refetchData).map((key) => ({
-              id: key,
-              ...refetchData[key],
-            }));
+          // Refresh students from Supabase after update (realtime subscription will also update automatically)
+          const refetchData = await supabaseGetAll("datasheet/Học_sinh");
+          if (refetchData && typeof refetchData === 'object') {
+            const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+              return {
+                id: key,
+                ...converted,
+              };
+            });
             console.log(
               "🔄 Students refetched after update:",
               studentsArray.length
@@ -1001,17 +1087,7 @@ const StudentListView: React.FC = () => {
           } else {
             message.success("Học sinh đã được cập nhật thành công!");
           }
-        } else {
-          const errorText = await response.text();
-          console.error(
-            "❌ Không cập nhật được học sinh. Status:",
-            response.status,
-            errorText
-          );
-          message.error(
-            `Không cập nhật được học sinh. Status: ${response.status}`
-          );
-        }
+          
         // After updating student, update class membership according to selectedClassIds
         try {
           const studentId = studentData.id as string;
@@ -1137,6 +1213,203 @@ const StudentListView: React.FC = () => {
     setEditModalOpen(true);
   };
 
+  // Handle sync students from Firebase to Supabase
+  const handleSyncStudentsToSupabase = async () => {
+    try {
+      setSyncingStudents(true);
+      message.loading({ content: "Đang làm mới danh sách học sinh từ Supabase...", key: "sync" });
+
+      // Read students from Supabase
+      const supabaseStudents = await supabaseGetAll("datasheet/Học_sinh");
+
+      if (!supabaseStudents || typeof supabaseStudents !== 'object') {
+        message.error({ content: "Không tìm thấy học sinh trong Supabase", key: "sync" });
+        return;
+      }
+
+      // Convert to Firebase format for display
+      const studentsArray = Object.entries(supabaseStudents).map(([key, value]: [string, any]) => {
+        const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+        return {
+          id: key,
+          ...converted,
+        };
+      });
+      
+      setStudents(studentsArray);
+      
+      message.success({ 
+        content: `Đã làm mới danh sách! Tổng: ${studentsArray.length} học sinh`, 
+        key: "sync",
+        duration: 3 
+      });
+      
+      setSyncingStudents(false);
+      return;
+      
+      // Old sync code below (kept for reference but not used)
+      const studentEntries = Object.entries(supabaseStudents);
+      console.log(`📥 Found ${studentEntries.length} students in Firebase`);
+
+      // Field mapping
+      const fieldMapping: Record<string, string> = {
+        "Họ và tên": "ho_va_ten",
+        "Mã học sinh": "ma_hoc_sinh",
+        "Ngày sinh": "ngay_sinh",
+        "Giới tính": "gioi_tinh",
+        "Số điện thoại": "so_dien_thoai",
+        "SĐT phụ huynh": "sdt_phu_huynh",
+        "Họ tên phụ huynh": "ho_ten_phu_huynh",
+        "Phụ huynh": "ho_ten_phu_huynh",
+        "Địa chỉ": "dia_chi",
+        "Trường": "truong",
+        "Khối": "khoi",
+        "Email": "email",
+        "Username": "username",
+        "Password": "password",
+        "Điểm số": "diem_so",
+        "Trạng thái": "trang_thai",
+        "Số giờ đã gia hạn": "so_gio_da_gia_han",
+        "Số giờ còn lại": "so_gio_con_lai",
+        "Số giờ đã học": "so_gio_da_hoc",
+        "Ghi chú": "ghi_chu",
+      };
+
+      // Convert and migrate each student
+      let successCount = 0;
+      let updateCount = 0;
+      let insertCount = 0;
+      let errorCount = 0;
+
+      for (const [studentId, studentData] of studentEntries) {
+        const studentDataTyped = studentData as any;
+        try {
+          const supabaseData: any = {
+            id: studentId,
+            metadata: {},
+          };
+
+          // Map known fields
+          Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
+            if (studentDataTyped[firebaseField] !== undefined && studentDataTyped[firebaseField] !== null) {
+              let value = studentDataTyped[firebaseField];
+              
+              // Handle date fields - skip empty strings
+              if (supabaseField === "ngay_sinh") {
+                if (typeof value === "string" && value.trim() === "") {
+                  // Skip empty date strings
+                  return;
+                }
+                // Keep date as string (YYYY-MM-DD format for DATE type)
+                if (typeof value === "string") {
+                  // Validate date format
+                  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+                  if (!dateRegex.test(value)) {
+                    // Try to parse and reformat
+                    const parsedDate = new Date(value);
+                    if (!isNaN(parsedDate.getTime())) {
+                      value = parsedDate.toISOString().split("T")[0];
+                    } else {
+                      // Invalid date, skip
+                      return;
+                    }
+                  }
+                }
+              }
+              
+              // Convert numeric fields
+              if (["so_gio_da_gia_han", "so_gio_con_lai", "so_gio_da_hoc", "diem_so"].includes(supabaseField)) {
+                value = typeof value === "string" ? parseFloat(value) || 0 : (value || 0);
+              }
+              
+              // Set default for trang_thai
+              if (supabaseField === "trang_thai") {
+                value = value || "active";
+              }
+              
+              // Only set if value is not empty string
+              if (value !== "" && value !== null && value !== undefined) {
+                supabaseData[supabaseField] = value;
+              }
+            }
+          });
+
+          // Store unknown fields in metadata
+          Object.keys(studentDataTyped).forEach((key) => {
+            if (!fieldMapping[key] && key !== "id") {
+              supabaseData.metadata[key] = studentDataTyped[key];
+            }
+          });
+
+          // Check if student exists (use maybeSingle to avoid error if not found)
+          const { data: existing, error: checkError } = await supabaseAdmin
+            .from("hoc_sinh")
+            .select("id")
+            .eq("id", studentId)
+            .maybeSingle();
+          
+          // If error is not "not found", log it but continue
+          if (checkError && checkError.code !== "PGRST116") {
+            console.warn(`Warning checking student ${studentId}:`, checkError);
+          }
+
+          if (existing) {
+            // Update existing - ALWAYS update to sync changes from Firebase
+            const { error } = await supabaseAdmin
+              .from("hoc_sinh")
+              .update(supabaseData)
+              .eq("id", studentId);
+            
+            if (error) throw error;
+            updateCount++;
+            console.log(`✅ Updated: ${supabaseData.ho_va_ten || studentId}`);
+          } else {
+            // Insert new
+            const { error } = await supabaseAdmin
+              .from("hoc_sinh")
+              .insert(supabaseData);
+            
+            if (error) throw error;
+            insertCount++;
+            console.log(`✅ Inserted: ${supabaseData.ho_va_ten || studentId}`);
+          }
+
+          successCount++;
+        } catch (error: any) {
+          errorCount++;
+          console.error(`Error migrating student ${studentId}:`, error);
+        }
+      }
+
+      message.success({ 
+        content: `Đồng bộ hoàn tất! Tổng: ${successCount} (Cập nhật: ${updateCount}, Thêm mới: ${insertCount}), Lỗi: ${errorCount}`, 
+        key: "sync",
+        duration: 8 
+      });
+
+      // Refresh students list from Supabase
+      const refreshData = await supabaseGetAll("datasheet/Học_sinh");
+      if (refreshData && typeof refreshData === 'object') {
+        const studentsArray = Object.entries(refreshData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        setStudents(studentsArray);
+      }
+    } catch (error: any) {
+      console.error("Error syncing students:", error);
+      message.error({ 
+        content: `Lỗi khi đồng bộ: ${error.message}`, 
+        key: "sync" 
+      });
+    } finally {
+      setSyncingStudents(false);
+    }
+  };
+
   const handleExtendHours = (student: Student) => {
     setExtendingStudent(student);
     setExtendModalOpen(true);
@@ -1167,36 +1440,30 @@ const StudentListView: React.FC = () => {
         Timestamp: now.toISOString(),
       };
 
-      const response = await fetch(STARS_HISTORY_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(starsRecord),
-      });
+      // Save to Supabase
+      const supabaseStarsData = convertToSupabaseFormat(starsRecord, "lich_su_sao_thuong");
+      const starsId = `star_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      supabaseStarsData.id = starsId;
+      await supabaseSet(`datasheet/Lịch_sử_sao_thưởng/${starsId}`, supabaseStarsData);
 
-      if (response.ok) {
-        const refreshResponse = await fetch(
-          `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
-          { cache: "no-cache" }
-        );
-        const refreshData = await refreshResponse.json();
-        if (refreshData) {
-          const historyArray = Object.keys(refreshData).map((key) => ({
+      // Refresh from Supabase
+      const refreshData = await supabaseGetAll("datasheet/Lịch_sử_sao_thưởng");
+      if (refreshData && typeof refreshData === 'object') {
+        const historyArray = Object.entries(refreshData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "lich_su_sao_thuong");
+          return {
             id: key,
-            ...refreshData[key],
-          }));
-          historyArray.sort(
-            (a, b) =>
-              new Date(b.Timestamp || 0).getTime() -
-              new Date(a.Timestamp || 0).getTime()
-          );
-          setStarsHistory(historyArray);
-        }
-        message.success(`Đã cập nhật số sao thưởng thành ${newTotal} ⭐`);
-      } else {
-        const errorText = await response.text();
-        console.error("❌ Failed to save stars:", response.status, errorText);
-        message.error("Không lưu được số sao thưởng");
+            ...converted,
+          };
+        });
+        historyArray.sort(
+          (a, b) =>
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
+        );
+        setStarsHistory(historyArray);
       }
+      message.success(`Đã cập nhật số sao thưởng thành ${newTotal} ⭐`);
     } catch (error) {
       console.error("❌ Error saving stars:", error);
       message.error("Không lưu được số sao thưởng");
@@ -1261,31 +1528,18 @@ const StudentListView: React.FC = () => {
         "Last Edited By": currentUsername,
       };
 
-      // Update in Firebase
-      const updateUrl = `${EXTENSION_HISTORY_URL}/${editingExtension.id}.json`;
-      const updateResponse = await fetch(updateUrl, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedRecord),
-      });
+      // Update in Supabase
+      const supabaseUpdateData = convertToSupabaseFormat(updatedRecord, "gia_han");
+      supabaseUpdateData.id = editingExtension.id;
+      await supabaseSet(`datasheet/Gia_hạn/${editingExtension.id}`, supabaseUpdateData);
 
-      if (!updateResponse.ok) {
-        throw new Error(`Failed to update: ${updateResponse.status}`);
-      }
-
-      // Recalculate total extended hours
-      const historyResponse = await fetch(
-        `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-        {
-          cache: "no-cache",
-        }
-      );
-      const historyData = await historyResponse.json();
+      // Recalculate total extended hours from Supabase
+      const historyData = await supabaseGetAll("datasheet/Gia_hạn");
 
       let totalExtended = 0;
-      if (historyData) {
-        Object.keys(historyData).forEach((key) => {
-          const record = historyData[key];
+      if (historyData && typeof historyData === 'object') {
+        Object.entries(historyData).forEach(([key, value]: [string, any]) => {
+          const record = convertFromSupabaseFormat(value, "gia_han");
           if (record.studentId === studentId) {
             totalExtended += Number(record["Giờ nhập thêm"]) || 0;
           }
@@ -1298,32 +1552,22 @@ const StudentListView: React.FC = () => {
       if (!currentUser) {
         throw new Error("You must be logged in to update student hours");
       }
-      const studentUrl = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-      const studentUpdateResponse = await fetch(studentUrl, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ "Số giờ đã gia hạn": totalExtended }),
-      });
+      // Update student in Supabase
+      const studentData = { "Số giờ đã gia hạn": totalExtended };
+      const supabaseData = convertToSupabaseFormat(studentData, "hoc_sinh");
+      supabaseData.id = studentId;
+      await supabaseSet(`datasheet/Học_sinh/${studentId}`, supabaseData);
 
-      if (!studentUpdateResponse.ok) {
-        throw new Error(
-          `Không cập nhật được học sinh: ${studentUpdateResponse.status}`
-        );
-      }
-
-      // Refresh all data
-      const refetchResponse = await fetch(
-        `${STUDENT_LIST_URL}?_=${new Date().getTime()}`,
-        {
-          cache: "no-cache",
-        }
-      );
-      const refetchData = await refetchResponse.json();
-      if (refetchData) {
-        const studentsArray = Object.keys(refetchData).map((key) => ({
-          id: key,
-          ...refetchData[key],
-        }));
+      // Refresh all data from Supabase
+      const refetchData = await supabaseGetAll("datasheet/Học_sinh");
+      if (refetchData && typeof refetchData === 'object') {
+        const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         setStudents(studentsArray);
       }
 
@@ -1369,31 +1613,17 @@ const StudentListView: React.FC = () => {
     try {
       console.log("🗑️ Deleting extension record:", recordId);
 
-      // Delete from Extension History table
-      const deleteUrl = `${EXTENSION_HISTORY_URL}/${recordId}.json`;
-      const deleteResponse = await fetch(deleteUrl, {
-        method: "DELETE",
-      });
+      // Delete from Supabase Extension History table
+      await supabaseRemove(`datasheet/Gia_hạn/${recordId}`);
+      console.log("✅ Extension record deleted from Supabase");
 
-      if (!deleteResponse.ok) {
-        throw new Error(`Failed to delete: ${deleteResponse.status}`);
-      }
-
-      console.log("✅ Extension record deleted");
-
-      // Recalculate total extended hours from remaining records
-      const historyResponse = await fetch(
-        `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-        {
-          cache: "no-cache",
-        }
-      );
-      const historyData = await historyResponse.json();
+      // Recalculate total extended hours from remaining records in Supabase
+      const historyData = await supabaseGetAll("datasheet/Gia_hạn");
 
       let totalExtended = 0;
-      if (historyData) {
-        Object.keys(historyData).forEach((key) => {
-          const record = historyData[key];
+      if (historyData && typeof historyData === 'object') {
+        Object.entries(historyData).forEach(([key, value]: [string, any]) => {
+          const record = convertFromSupabaseFormat(value, "gia_han");
           if (record.studentId === studentId) {
             totalExtended += Number(record["Giờ nhập thêm"]) || 0;
           }
@@ -1402,53 +1632,39 @@ const StudentListView: React.FC = () => {
 
       console.log("📊 Updated total extended hours:", totalExtended);
 
-      // Update student's total extended hours
-      const studentUrl = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
-      const updateResponse = await fetch(studentUrl, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ "Số giờ đã gia hạn": totalExtended }),
-      });
+      // Update student's total extended hours in Supabase
+      const studentData = { "Số giờ đã gia hạn": totalExtended };
+      const supabaseData = convertToSupabaseFormat(studentData, "hoc_sinh");
+      supabaseData.id = studentId;
+      await supabaseSet(`datasheet/Học_sinh/${studentId}`, supabaseData);
 
-      if (!updateResponse.ok) {
-        throw new Error(
-          `Không cập nhật được học sinh: ${updateResponse.status}`
-        );
-      }
-
-      // Refresh all data
-      const refetchResponse = await fetch(
-        `${STUDENT_LIST_URL}?_=${new Date().getTime()}`,
-        {
-          cache: "no-cache",
-        }
-      );
-      const refetchData = await refetchResponse.json();
-      if (refetchData) {
-        const studentsArray = Object.keys(refetchData).map((key) => ({
-          id: key,
-          ...refetchData[key],
-        }));
+      // Refresh all data from Supabase
+      const refetchData = await supabaseGetAll("datasheet/Học_sinh");
+      if (refetchData && typeof refetchData === 'object') {
+        const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         setStudents(studentsArray);
       }
 
-      // Refresh extension history
-      const refreshHistoryResponse = await fetch(
-        `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-        {
-          cache: "no-cache",
-        }
-      );
-      const refreshHistoryData = await refreshHistoryResponse.json();
-      if (refreshHistoryData) {
-        const historyArray = Object.keys(refreshHistoryData).map((key) => ({
-          id: key,
-          ...refreshHistoryData[key],
-        }));
+      // Refresh extension history from Supabase
+      const refreshHistoryData = await supabaseGetAll("datasheet/Gia_hạn");
+      if (refreshHistoryData && typeof refreshHistoryData === 'object') {
+        const historyArray = Object.entries(refreshHistoryData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "gia_han");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         historyArray.sort(
           (a, b) =>
-            new Date(b.Timestamp || 0).getTime() -
-            new Date(a.Timestamp || 0).getTime()
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
         );
         setExtensionHistory(historyArray);
       }
@@ -1510,119 +1726,92 @@ const StudentListView: React.FC = () => {
         Timestamp: now.toISOString(),
       };
 
-      // Save extension history
-      const historyResponse = await fetch(EXTENSION_HISTORY_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(extensionRecord),
+      // Save extension history to Supabase
+      const supabaseExtensionData = convertToSupabaseFormat(extensionRecord, "gia_han");
+      // Generate ID if not provided
+      const extensionId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      supabaseExtensionData.id = extensionId;
+      
+      await supabaseSet(`datasheet/Gia_hạn/${extensionId}`, supabaseExtensionData);
+      console.log("✅ Extension history saved to Supabase");
+
+      // Lấy lại TOÀN BỘ lịch sử gia hạn từ Supabase
+      const historyData = await supabaseGetAll("datasheet/Gia_hạn");
+
+      // Tính TỔNG tất cả giờ gia hạn của học sinh này từ bảng Gia_hạn
+      let totalExtended = 0;
+      if (historyData && typeof historyData === 'object') {
+        Object.entries(historyData).forEach(([key, value]: [string, any]) => {
+          const record = convertFromSupabaseFormat(value, "gia_han");
+          if (record.studentId === extendingStudent.id) {
+            totalExtended += Number(record["Giờ nhập thêm"]) || 0;
+          }
+        });
+      }
+
+      console.log("📤 Cập nhật tổng giờ từ bảng Gia_hạn:", {
+        id: extendingStudent.id,
+        name: currentStudent["Họ và tên"],
+        totalFromHistory: totalExtended,
+        justAdded: additionalHours,
       });
 
-      if (historyResponse.ok) {
-        // Lấy lại TOÀN BỘ lịch sử gia hạn từ Firebase
-        const refreshHistoryResponse = await fetch(
-          `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-          {
-            cache: "no-cache",
-          }
-        );
-        const historyData = await refreshHistoryResponse.json();
-
-        // Tính TỔNG tất cả giờ gia hạn của học sinh này từ bảng Gia_hạn
-        let totalExtended = 0;
-        if (historyData) {
-          Object.keys(historyData).forEach((key) => {
-            const record = historyData[key];
-            if (record.studentId === extendingStudent.id) {
-              totalExtended += Number(record["Giờ nhập thêm"]) || 0;
-            }
-          });
-        }
-
-        console.log("📤 Cập nhật tổng giờ từ bảng Gia_hạn:", {
-          id: extendingStudent.id,
-          name: currentStudent["Họ và tên"],
-          totalFromHistory: totalExtended,
-          justAdded: additionalHours,
-        });
-
-        // Cập nhật tổng vào bảng Danh_sách_học_sinh
-        if (!currentUser) {
-          throw new Error("You must be logged in to update student hours");
-        }
-        const studentUrl = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${extendingStudent.id}.json`;
-        const updateResponse = await fetch(studentUrl, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ "Số giờ đã gia hạn": totalExtended }),
-        });
-
-        if (updateResponse.ok) {
-          const result = await updateResponse.json();
-          console.log("✅ Extension saved successfully to Firebase:", result);
-
-          // Refetch student data from Firebase to ensure accuracy
-          const refetchResponse = await fetch(
-            `${STUDENT_LIST_URL}?_=${new Date().getTime()}`,
-            {
-              cache: "no-cache",
-            }
-          );
-          const refetchData = await refetchResponse.json();
-          if (refetchData) {
-            const studentsArray = Object.keys(refetchData).map((key) => ({
-              id: key,
-              ...refetchData[key],
-            }));
-            console.log("🔄 Students refetched after extension");
-            setStudents(studentsArray);
-          }
-
-          // Refresh extension history - fetch ALL records again
-          const refreshHistoryResponse2 = await fetch(
-            `${EXTENSION_HISTORY_URL}?_=${new Date().getTime()}`,
-            {
-              cache: "no-cache",
-            }
-          );
-          const refreshHistoryData = await refreshHistoryResponse2.json();
-          if (refreshHistoryData) {
-            const historyArray = Object.keys(refreshHistoryData).map((key) => ({
-              id: key,
-              ...refreshHistoryData[key],
-            }));
-            historyArray.sort(
-              (a, b) =>
-                new Date(b.Timestamp || 0).getTime() -
-                new Date(a.Timestamp || 0).getTime()
-            );
-            console.log(
-              "🔄 Extension history refetched:",
-              historyArray.length,
-              "records"
-            );
-            setExtensionHistory(historyArray);
-          }
-
-          setExtendModalOpen(false);
-          setExtendingStudent(null);
-
-          const action = additionalHours >= 0 ? "Thêm" : "Trừ";
-          const absHours = Math.abs(additionalHours);
-          message.success(
-            `Thành công ${action} ${absHours} giờ cho ${extendingStudent["Họ và tên"]}!\nTổng mới: ${totalExtended}h`
-          );
-        } else {
-          const errorText = await updateResponse.text();
-          console.error(
-            "❌ Failed to update Firebase:",
-            updateResponse.status,
-            errorText
-          );
-          message.error(
-            `Không cập nhật được học sinh. Status: ${updateResponse.status}`
-          );
-        }
+      // Cập nhật tổng vào bảng Danh_sách_học_sinh
+      if (!currentUser) {
+        throw new Error("You must be logged in to update student hours");
       }
+      // Update student in Supabase
+      const studentData = { "Số giờ đã gia hạn": totalExtended };
+      const supabaseData = convertToSupabaseFormat(studentData, "hoc_sinh");
+      supabaseData.id = extendingStudent.id;
+      await supabaseSet(`datasheet/Học_sinh/${extendingStudent.id}`, supabaseData);
+      console.log("✅ Extension saved successfully to Supabase");
+
+      // Refetch student data from Supabase to ensure accuracy
+      const refetchData = await supabaseGetAll("datasheet/Học_sinh");
+      if (refetchData && typeof refetchData === 'object') {
+        const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        console.log("🔄 Students refetched after extension");
+        setStudents(studentsArray);
+      }
+
+      // Refresh extension history from Supabase
+      const refreshHistoryData = await supabaseGetAll("datasheet/Gia_hạn");
+      if (refreshHistoryData && typeof refreshHistoryData === 'object') {
+        const historyArray = Object.entries(refreshHistoryData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "gia_han");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        historyArray.sort(
+          (a, b) =>
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
+        );
+        console.log(
+          "🔄 Extension history refetched from Supabase:",
+          historyArray.length,
+          "records"
+        );
+        setExtensionHistory(historyArray);
+      }
+
+      setExtendModalOpen(false);
+      setExtendingStudent(null);
+
+      const action = additionalHours >= 0 ? "Thêm" : "Trừ";
+      const absHours = Math.abs(additionalHours);
+      message.success(
+        `Thành công ${action} ${absHours} giờ cho ${extendingStudent["Họ và tên"]}!\nTổng mới: ${totalExtended}h`
+      );
     } catch (error) {
       console.error("❌ Error saving extension:", error);
       message.error(
@@ -1660,45 +1849,38 @@ const StudentListView: React.FC = () => {
         Timestamp: now.toISOString(),
       };
 
-      const response = await fetch(STARS_HISTORY_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(starsRecord),
-      });
+      // Save to Supabase
+      const supabaseStarsData = convertToSupabaseFormat(starsRecord, "lich_su_sao_thuong");
+      const starsId = `star_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      supabaseStarsData.id = starsId;
+      await supabaseSet(`datasheet/Lịch_sử_sao_thưởng/${starsId}`, supabaseStarsData);
+      console.log("✅ Stars adjustment saved successfully to Supabase");
 
-      if (response.ok) {
-        console.log("✅ Stars adjustment saved successfully");
-
-        const refreshResponse = await fetch(
-          `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
-          { cache: "no-cache" }
-        );
-        const refreshData = await refreshResponse.json();
-        if (refreshData) {
-          const historyArray = Object.keys(refreshData).map((key) => ({
+      // Refresh from Supabase
+      const refreshData = await supabaseGetAll("datasheet/Lịch_sử_sao_thưởng");
+      if (refreshData && typeof refreshData === 'object') {
+        const historyArray = Object.entries(refreshData).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "lich_su_sao_thuong");
+          return {
             id: key,
-            ...refreshData[key],
-          }));
-          historyArray.sort(
-            (a, b) =>
-              new Date(b.Timestamp || 0).getTime() -
-              new Date(a.Timestamp || 0).getTime()
-          );
-          setStarsHistory(historyArray);
-        }
-
-        setEditStarsModalOpen(false);
-        setEditingStarsStudent(null);
-        editStarsForm.resetFields();
-
-        message.success(
-          `Đã ${adjustment > 0 ? "thêm" : "trừ"} ${Math.abs(adjustment)} sao thưởng cho ${editingStarsStudent["Họ và tên"]}!\nTổng mới: ${newTotal} ⭐`
+            ...converted,
+          };
+        });
+        historyArray.sort(
+          (a, b) =>
+            new Date(b.Timestamp || b.timestamp || 0).getTime() -
+            new Date(a.Timestamp || a.timestamp || 0).getTime()
         );
-      } else {
-        const errorText = await response.text();
-        console.error("❌ Failed to save stars:", response.status, errorText);
-        message.error(`Không lưu được điều chỉnh sao thưởng. Status: ${response.status}`);
+        setStarsHistory(historyArray);
       }
+
+      setEditStarsModalOpen(false);
+      setEditingStarsStudent(null);
+      editStarsForm.resetFields();
+
+      message.success(
+        `Đã ${adjustment > 0 ? "thêm" : "trừ"} ${Math.abs(adjustment)} sao thưởng cho ${editingStarsStudent["Họ và tên"]}!\nTổng mới: ${newTotal} ⭐`
+      );
     } catch (error) {
       console.error("❌ Error saving stars:", error);
       message.error("Không lưu được điều chỉnh sao thưởng. Kiểm tra console để biết chi tiết.");
@@ -1734,32 +1916,30 @@ const StudentListView: React.FC = () => {
             Timestamp: now.toISOString(),
           };
 
-          const response = await fetch(STARS_HISTORY_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(resetRecord),
-          });
+          // Save to Supabase
+          const supabaseResetData = convertToSupabaseFormat(resetRecord, "lich_su_sao_thuong");
+          const resetId = `star_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          supabaseResetData.id = resetId;
+          await supabaseSet(`datasheet/Lịch_sử_sao_thưởng/${resetId}`, supabaseResetData);
+          console.log("✅ Stars reset successfully in Supabase");
 
-          if (response.ok) {
-            console.log("✅ Stars reset successfully");
-
-            const refreshResponse = await fetch(
-              `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
-              { cache: "no-cache" }
-            );
-            const refreshData = await refreshResponse.json();
-            if (refreshData) {
-              const historyArray = Object.keys(refreshData).map((key) => ({
+          // Refresh from Supabase
+          const refreshData = await supabaseGetAll("datasheet/Lịch_sử_sao_thưởng");
+          if (refreshData && typeof refreshData === 'object') {
+            const historyArray = Object.entries(refreshData).map(([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "lich_su_sao_thuong");
+              return {
                 id: key,
-                ...refreshData[key],
-              }));
-              historyArray.sort(
-                (a, b) =>
-                  new Date(b.Timestamp || 0).getTime() -
-                  new Date(a.Timestamp || 0).getTime()
-              );
-              setStarsHistory(historyArray);
-            }
+                ...converted,
+              };
+            });
+            historyArray.sort(
+              (a, b) =>
+                new Date(b.Timestamp || b.timestamp || 0).getTime() -
+                new Date(a.Timestamp || a.timestamp || 0).getTime()
+            );
+            setStarsHistory(historyArray);
+          }
 
             setEditStarsModalOpen(false);
             setEditingStarsStudent(null);
@@ -1768,11 +1948,6 @@ const StudentListView: React.FC = () => {
             message.success(
               `Đã reset sao thưởng của ${editingStarsStudent["Họ và tên"]} về 0!`
             );
-          } else {
-            const errorText = await response.text();
-            console.error("❌ Failed to reset stars:", response.status, errorText);
-            message.error(`Không reset được sao thưởng. Status: ${response.status}`);
-          }
         } catch (error) {
           console.error("❌ Error resetting stars:", error);
           message.error("Không reset được sao thưởng. Kiểm tra console để biết chi tiết.");
@@ -2354,6 +2529,14 @@ const StudentListView: React.FC = () => {
               </Button>
             )}
             <Button
+              type="default"
+              onClick={handleSyncStudentsToSupabase}
+              icon={<SyncOutlined />}
+              loading={syncingStudents}
+            >
+              Đồng bộ sang Supabase
+            </Button>
+            <Button
               type="primary"
               onClick={handleAddStudent}
               icon={<PlusOutlined />}
@@ -2397,8 +2580,8 @@ const StudentListView: React.FC = () => {
         </Card>
 
         <Card title="Bộ lọc" className="mb-6">
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12} md={6}>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Chọn tháng
               </label>
@@ -2410,16 +2593,86 @@ const StudentListView: React.FC = () => {
                 placeholder="Chọn tháng"
                 className="w-full"
               />
-            </div>
-            <div className="pt-7">
-              <Button
-                onClick={() => setSelectedMonth(dayjs())}
-                icon={<ClearOutlined />}
-              >
-                Tháng hiện tại
-              </Button>
-            </div>
-          </div>
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Lọc theo khối
+              </label>
+              <Select
+                mode="multiple"
+                value={gradeFilter}
+                onChange={(values) => {
+                  setGradeFilter(values);
+                  // Khi thay đổi khối, xóa class filter nếu lớp không thuộc khối mới
+                  if (values.length > 0) {
+                    const validClassIds = classes
+                      .filter((cls) => {
+                        const classGrade = cls["Khối"] || "";
+                        return values.includes(classGrade);
+                      })
+                      .map((cls) => cls.id);
+                    // Chỉ giữ lại các lớp thuộc khối đã chọn
+                    setClassFilter((prev) => prev.filter((id) => validClassIds.includes(id)));
+                  }
+                }}
+                placeholder="Tất cả các khối"
+                allowClear
+                className="w-full"
+                options={studentGradeOptions.map(option => ({
+                  label: option.label,
+                  value: option.value,
+                }))}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Lọc theo lớp
+              </label>
+              <Select
+                mode="multiple"
+                value={classFilter}
+                onChange={setClassFilter}
+                placeholder="Tất cả các lớp"
+                allowClear
+                className="w-full"
+                showSearch
+                filterOption={(input, option) => {
+                  const label = option?.label || option?.children || "";
+                  return String(label).toLowerCase().includes(input.toLowerCase());
+                }}
+                options={classes
+                  .filter((cls) => {
+                    // Nếu có filter theo khối, chỉ hiển thị lớp thuộc khối đó
+                    if (gradeFilter.length > 0) {
+                      const classGrade = cls["Khối"] || "";
+                      return gradeFilter.includes(classGrade);
+                    }
+                    return true; // Không filter khối thì hiển thị tất cả
+                  })
+                  .map((cls) => ({
+                    label: cls["Mã lớp"] && cls["Tên lớp"]
+                      ? `${cls["Mã lớp"]} - ${cls["Tên lớp"]}`
+                      : cls["Tên lớp"] || cls.id,
+                    value: cls.id,
+                  }))}
+              />
+            </Col>
+            <Col xs={24} sm={12} md={6}>
+              <div className="pt-7">
+                <Button
+                  onClick={() => {
+                    setSelectedMonth(dayjs());
+                    setGradeFilter([]);
+                    setClassFilter([]);
+                  }}
+                  icon={<ClearOutlined />}
+                  className="w-full"
+                >
+                  Xóa bộ lọc
+                </Button>
+              </div>
+            </Col>
+          </Row>
         </Card>
 
         {/* Students Table */}
@@ -2607,7 +2860,12 @@ const StudentListView: React.FC = () => {
                   name: record.student.id,
                 }),
               }}
-              pagination={{ pageSize: 10, showSizeChanger: false }}
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: true,
+                pageSizeOptions: ['10', '20', '50', '100'],
+                showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} học sinh`,
+              }}
               scroll={{ x: 1200 }}
             />
           </Card>

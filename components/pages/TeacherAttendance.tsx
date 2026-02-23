@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { Card, List, Tag, Button, Empty, Badge, Table, Select, DatePicker, Space, Popconfirm, message } from "antd";
-import { ClockCircleOutlined, CheckCircleOutlined, HistoryOutlined, DeleteOutlined } from "@ant-design/icons";
+import { Card, List, Tag, Button, Empty, Badge, Table, Select, DatePicker, Space, Popconfirm, message, Tabs } from "antd";
+import { ClockCircleOutlined, CheckCircleOutlined, HistoryOutlined, DeleteOutlined, UnorderedListOutlined } from "@ant-design/icons";
 import { useClasses } from "../../hooks/useClasses";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class, AttendanceSession } from "../../types";
@@ -12,6 +12,7 @@ import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import WrapperContent from "@/components/WrapperContent";
 import { subjectMap } from "@/utils/selectOptions";
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 
 dayjs.extend(isSameOrAfter);
 dayjs.extend(isSameOrBefore);
@@ -42,6 +43,13 @@ const TeacherAttendance = () => {
   const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
   // Bug 5: Thêm state cho ngày điểm danh (cho phép điểm danh bù hôm trước)
   const [selectedAttendanceDate, setSelectedAttendanceDate] = useState<Dayjs>(dayjs());
+  
+  // State cho tab "Điểm danh chi tiết"
+  const [activeTab, setActiveTab] = useState<string>("main");
+  const [allAttendanceSessions, setAllAttendanceSessions] = useState<AttendanceSession[]>([]);
+  const [detailFilterMonth, setDetailFilterMonth] = useState<number>(dayjs().month() + 1); // 1-12
+  const [detailFilterYear, setDetailFilterYear] = useState<number>(dayjs().year());
+  const [loadingDetailSessions, setLoadingDetailSessions] = useState(true);
 
   const isAdmin = userProfile?.isAdmin === true || userProfile?.role === "admin";
   const teacherId =
@@ -104,6 +112,56 @@ const TeacherAttendance = () => {
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  // Load all attendance sessions from Supabase for "Điểm danh chi tiết" tab
+  useEffect(() => {
+    const loadDetailSessions = async () => {
+      try {
+        setLoadingDetailSessions(true);
+        const data = await supabaseGetAll("datasheet/Điểm_danh_sessions");
+        if (data) {
+          const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...converted,
+            } as AttendanceSession;
+          });
+          setAllAttendanceSessions(sessionsList);
+        } else {
+          setAllAttendanceSessions([]);
+        }
+      } catch (error) {
+        console.error("Error loading detail sessions:", error);
+        setAllAttendanceSessions([]);
+      } finally {
+        setLoadingDetailSessions(false);
+      }
+    };
+
+    loadDetailSessions();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
+      if (data) {
+        const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id,
+            ...converted,
+          } as AttendanceSession;
+        });
+        setAllAttendanceSessions(sessionsList);
+      } else {
+        setAllAttendanceSessions([]);
+      }
+      setLoadingDetailSessions(false);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   // Bug 5: Sử dụng ngày được chọn thay vì ngày hôm nay (cho phép điểm danh bù)
@@ -637,8 +695,143 @@ const TeacherAttendance = () => {
     },
   ];
 
+  // Filter sessions for detail tab by month/year
+  const filteredDetailSessions = useMemo(() => {
+    return allAttendanceSessions.filter((session) => {
+      if (!session["Ngày"]) return false;
+      
+      try {
+        // Parse date from DD/MM/YYYY or ISO format
+        let sessionDate: Date;
+        const dateStr = session["Ngày"];
+        
+        // Try DD/MM/YYYY format first
+        const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        if (ddmmyyyyMatch) {
+          const day = parseInt(ddmmyyyyMatch[1], 10);
+          const month = parseInt(ddmmyyyyMatch[2], 10);
+          const year = parseInt(ddmmyyyyMatch[3], 10);
+          sessionDate = new Date(year, month - 1, day);
+        } else {
+          sessionDate = new Date(dateStr);
+        }
+        
+        if (isNaN(sessionDate.getTime())) return false;
+        
+        const sessionMonth = sessionDate.getMonth() + 1; // 1-12
+        const sessionYear = sessionDate.getFullYear();
+        
+        return sessionMonth === detailFilterMonth && sessionYear === detailFilterYear;
+      } catch (error) {
+        return false;
+      }
+    });
+  }, [allAttendanceSessions, detailFilterMonth, detailFilterYear]);
+
+  // Columns for detail table
+  const detailColumns = [
+    {
+      title: "Ngày",
+      dataIndex: "Ngày",
+      key: "Ngày",
+      width: 120,
+      render: (text: string) => {
+        try {
+          const dateStr = text;
+          const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (ddmmyyyyMatch) {
+            return text;
+          }
+          return dayjs(text).format("DD/MM/YYYY");
+        } catch {
+          return text;
+        }
+      },
+    },
+    {
+      title: "Tên lớp",
+      dataIndex: "Tên lớp",
+      key: "Tên lớp",
+      width: 150,
+    },
+    {
+      title: "Mã lớp",
+      dataIndex: "Mã lớp",
+      key: "Mã lớp",
+      width: 100,
+    },
+    {
+      title: "Môn học",
+      dataIndex: "Môn học",
+      key: "Môn học",
+      width: 120,
+      render: (text: string) => subjectMap[text] || text,
+    },
+    {
+      title: "Giờ bắt đầu",
+      dataIndex: "Giờ bắt đầu",
+      key: "Giờ bắt đầu",
+      width: 100,
+    },
+    {
+      title: "Giờ kết thúc",
+      dataIndex: "Giờ kết thúc",
+      key: "Giờ kết thúc",
+      width: 100,
+    },
+    {
+      title: "Giáo viên",
+      dataIndex: "Giáo viên",
+      key: "Giáo viên",
+      width: 150,
+    },
+    {
+      title: "Số học sinh",
+      key: "soHocSinh",
+      width: 100,
+      render: (_: any, record: AttendanceSession) => {
+        const attendance = record["Điểm danh"];
+        if (Array.isArray(attendance)) {
+          return attendance.length;
+        } else if (attendance && typeof attendance === "object") {
+          return Object.keys(attendance).length;
+        }
+        return 0;
+      },
+    },
+    {
+      title: "Thao tác",
+      key: "action",
+      width: 150,
+      render: (_: any, record: AttendanceSession) => (
+        <Space size="small">
+          <Button
+            size="small"
+            onClick={() => {
+              const classId = record["Class ID"];
+              if (classId) {
+                navigate(`/workspace/classes/${classId}/history`);
+              }
+            }}
+          >
+            Xem chi tiết
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <WrapperContent title="Điểm danh" isLoading={loading}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: "main",
+            label: "Điểm danh",
+            children: (
+              <>
       {/* Bug 5: Thêm DatePicker cho phép chọn ngày điểm danh bù */}
       <Card size="small" style={{ marginBottom: 16, background: isToday ? "#f6ffed" : "#fffbe6" }}>
         <Space wrap>
@@ -906,6 +1099,73 @@ const TeacherAttendance = () => {
           />
         )}
       </Card>
+              </>
+            ),
+          },
+          {
+            key: "detail",
+            label: (
+              <span>
+                <UnorderedListOutlined />
+                Điểm danh chi tiết
+              </span>
+            ),
+            children: (
+              <Card>
+                <Space direction="vertical" style={{ width: "100%" }} size="large">
+                  <Space>
+                    <span>Tháng:</span>
+                    <Select
+                      value={detailFilterMonth}
+                      onChange={setDetailFilterMonth}
+                      style={{ width: 120 }}
+                    >
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <Select.Option key={i + 1} value={i + 1}>
+                          Tháng {i + 1}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                    <span>Năm:</span>
+                    <Select
+                      value={detailFilterYear}
+                      onChange={setDetailFilterYear}
+                      style={{ width: 120 }}
+                    >
+                      {Array.from({ length: 5 }, (_, i) => {
+                        const year = dayjs().year() - 2 + i;
+                        return (
+                          <Select.Option key={year} value={year}>
+                            {year}
+                          </Select.Option>
+                        );
+                      })}
+                    </Select>
+                  </Space>
+                  <Table
+                    columns={detailColumns}
+                    dataSource={filteredDetailSessions}
+                    rowKey="id"
+                    loading={loadingDetailSessions}
+                    pagination={{
+                      pageSize: 20,
+                      showSizeChanger: true,
+                      showTotal: (total) => `Tổng ${total} buổi điểm danh`,
+                    }}
+                    locale={{
+                      emptyText: (
+                        <Empty
+                          description={`Không có buổi điểm danh nào trong tháng ${detailFilterMonth}/${detailFilterYear}`}
+                        />
+                      ),
+                    }}
+                  />
+                </Space>
+              </Card>
+            ),
+          },
+        ]}
+      />
     </WrapperContent>
   );
 };

@@ -23,6 +23,7 @@ import {
 } from "@ant-design/icons";
 import { ref, onValue } from "firebase/database";
 import { database } from "../firebase";
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 import { useAttendanceStats } from "../hooks/useAttendanceStats";
 import { AttendanceSession, MonthlyComment, ClassStats } from "../types";
 import dayjs from "dayjs";
@@ -71,12 +72,21 @@ const StudentReport = ({
   const [customScoresData, setCustomScoresData] = useState<{ [classId: string]: any }>({});
   const [classes, setClasses] = useState<any[]>([]);
 
-  // Load classes from Firebase
+  // Load classes from Supabase
   useEffect(() => {
     if (!open) return;
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
+    
+    const loadClasses = async () => {
+      const data = await supabaseGetAll("datasheet/Lớp_học");
+      if (data) {
+        setClasses(Object.entries(data).map(([id, value]) => ({ id, ...(value as any) })));
+      }
+    };
+
+    loadClasses();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data) {
         setClasses(Object.entries(data).map(([id, value]) => ({ id, ...(value as any) })));
       }
@@ -84,7 +94,7 @@ const StudentReport = ({
     return () => unsubscribe();
   }, [open]);
 
-  // Load custom scores from Điểm_tự_nhập for all classes this student is in
+  // Load custom scores from Điểm_tự_nhập (Supabase) for all classes this student is in
   useEffect(() => {
     if (!open || !student?.id) return;
 
@@ -99,14 +109,45 @@ const StudentReport = ({
 
     if (studentClassIds.size === 0) return;
 
-    const scoresRef = ref(database, "datasheet/Điểm_tự_nhập");
-    const unsubscribe = onValue(scoresRef, (snapshot) => {
-      const data = snapshot.val();
+    const loadCustomScores = async () => {
+      const data = await supabaseGetAll("datasheet/Điểm_tự_nhập");
       if (data) {
         const relevantScores: { [classId: string]: any } = {};
         studentClassIds.forEach((classId) => {
-          if (data[classId]) {
-            relevantScores[classId] = data[classId];
+          // Find score data for this class (id = class_id)
+          const scoreEntry = Object.values(data).find((item: any) => {
+            const converted = convertFromSupabaseFormat(item, "diem_tu_nhap");
+            return converted["Class ID"] === classId || converted.class_id === classId || item.class_id === classId;
+          });
+          if (scoreEntry) {
+            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap");
+            relevantScores[classId] = {
+              columns: converted.columns || scoreEntry.columns || [],
+              scores: converted.scores || scoreEntry.scores || [],
+            };
+          }
+        });
+        setCustomScoresData(relevantScores);
+      }
+    };
+
+    loadCustomScores();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_tự_nhập", (data) => {
+      if (data) {
+        const relevantScores: { [classId: string]: any } = {};
+        studentClassIds.forEach((classId) => {
+          const scoreEntry = Object.values(data).find((item: any) => {
+            const converted = convertFromSupabaseFormat(item, "diem_tu_nhap");
+            return converted["Class ID"] === classId || converted.class_id === classId || item.class_id === classId;
+          });
+          if (scoreEntry) {
+            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap");
+            relevantScores[classId] = {
+              columns: converted.columns || scoreEntry.columns || [],
+              scores: converted.scores || scoreEntry.scores || [],
+            };
           }
         });
         setCustomScoresData(relevantScores);

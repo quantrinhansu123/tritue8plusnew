@@ -35,6 +35,7 @@ import {
 } from "@ant-design/icons";
 import { ref, onValue } from "firebase/database";
 import { database } from "../../firebase";
+import { supabaseGetById, supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 import { useAttendanceStats } from "../../hooks/useAttendanceStats";
 import { AttendanceSession } from "../../types";
 import ScoreDetailModal from "../ScoreDetailModal";
@@ -84,29 +85,49 @@ const StudentReportPage = () => {
 
   const { getStudentStats } = useAttendanceStats();
 
-  // Load student data
+  // Load student data from Supabase
   useEffect(() => {
     if (!studentId) return;
 
-    const studentRef = ref(
-      database,
-      `datasheet/Danh_sách_học_sinh/${studentId}`
-    );
-    const unsubscribe = onValue(studentRef, (snapshot) => {
-      const data = snapshot.val();
+    const loadStudent = async () => {
+      const data = await supabaseGetById("datasheet/Học_sinh", studentId);
       if (data) {
         setStudent({ id: studentId, ...data });
+      }
+    };
+
+    loadStudent();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Học_sinh", (allData) => {
+      if (allData && allData[studentId]) {
+        const converted = convertFromSupabaseFormat(allData[studentId], "hoc_sinh");
+        setStudent({ id: studentId, ...converted });
       }
     });
 
     return () => unsubscribe();
   }, [studentId]);
 
-  // Load classes
+  // Load classes from Supabase
   useEffect(() => {
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
+    const loadClasses = async () => {
+      const data = await supabaseGetAll("datasheet/Lớp_học");
+      if (data) {
+        const classesList = Object.entries(data).map(([id, value]) => ({
+          id,
+          ...(value as any),
+        }));
+        setClasses(classesList);
+      } else {
+        setClasses([]);
+      }
+    };
+
+    loadClasses();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data) {
         const classesList = Object.entries(data).map(([id, value]) => ({
           id,
@@ -121,16 +142,37 @@ const StudentReportPage = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load sessions
+  // Load sessions from Supabase
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const loadSessions = async () => {
+      const data = await supabaseGetAll("datasheet/Điểm_danh_sessions");
       if (data) {
-        const sessionsList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
+        const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id,
+            ...converted,
+          } as AttendanceSession;
+        });
+        setSessions(sessionsList);
+      } else {
+        setSessions([]);
+      }
+      setLoading(false);
+    };
+
+    loadSessions();
+
+    // Subscribe to real-time updates
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
+      if (data) {
+        const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id,
+            ...converted,
+          } as AttendanceSession;
+        });
         setSessions(sessionsList);
       } else {
         setSessions([]);

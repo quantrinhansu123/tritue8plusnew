@@ -8,7 +8,7 @@ import {
   InputNumber,
   Form,
   Space,
-  message,
+  App,
   Steps,
   Modal,
   Tag,
@@ -22,8 +22,16 @@ import {
 } from "antd";
 import { SaveOutlined, CheckOutlined, GiftOutlined, HistoryOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined, UploadOutlined, PaperClipOutlined, FileOutlined, DownloadOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ref, onValue, push, set, update, remove } from "firebase/database";
-import { database, DATABASE_URL_BASE } from "../../firebase";
+import {
+  supabaseGetAll,
+  supabaseGetById,
+  supabaseSet,
+  supabaseUpdate,
+  supabaseRemove,
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+  convertToSupabaseFormat,
+} from "@/utils/supabaseHelpers";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class, AttendanceSession, AttendanceRecord } from "../../types";
 import { subjectOptions } from "@/utils/selectOptions";
@@ -56,6 +64,7 @@ const AttendanceSessionPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { userProfile } = useAuth();
+  const { message } = App.useApp();
 
   const classData: Class = location.state?.classData;
   const sessionDate: string =
@@ -179,25 +188,24 @@ const AttendanceSessionPage = () => {
     currentAttendanceRecords: AttendanceRecord[]
   ) => {
     try {
-      const [studentsRes, classesRes, coursesRes, invoicesRes] = await Promise.all([
-        fetch(`${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`),
-        fetch(`${DATABASE_URL_BASE}/datasheet/L%E1%BB%9Bp_h%E1%BB%8Dc.json`),
-        fetch(`${DATABASE_URL_BASE}/datasheet/Kh%C3%B3a_h%E1%BB%8Dc.json`),
-        fetch(`${DATABASE_URL_BASE}/datasheet/Phi%E1%BA%BFu_thu_h%E1%BB%8Dc_ph%C3%AD.json`),
-      ]);
-
       const [studentsData, classesData, coursesData, invoicesData] = await Promise.all([
-        studentsRes.json(),
-        classesRes.json(),
-        coursesRes.json(),
-        invoicesRes.json(),
+        supabaseGetAll("datasheet/Học_sinh"),
+        supabaseGetAll("datasheet/Lớp_học"),
+        supabaseGetAll("datasheet/Khóa_học"),
+        supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết"),
       ]);
 
-      const studentsList = studentsData
-        ? Object.entries(studentsData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
+      const studentsList = studentsData && typeof studentsData === 'object'
+        ? Object.entries(studentsData).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return { id, ...converted };
+          })
         : [];
-      const classesList = classesData
-        ? Object.entries(classesData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
+      const classesList = classesData && typeof classesData === 'object'
+        ? Object.entries(classesData).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lop_hoc");
+            return { id, ...converted };
+          })
         : [];
       const coursesList = coursesData
         ? Object.entries(coursesData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
@@ -248,15 +256,15 @@ const AttendanceSessionPage = () => {
 
         const student = studentsMap[studentId];
         // Key bao gồm classId để tách riêng hóa đơn cho từng lớp
-        const key = `${studentId}-${currentClassId}-${targetMonth}-${targetYear}`;
+        const key = `${studentId}-${currentClassId}-${targetMonth + 1}-${targetYear}`;
         const existing = existingInvoices[key];
         const existingStatus = typeof existing === "object" && existing !== null ? existing.status : existing;
         const isPaid = existingStatus === "paid";
-
+        
         const sessionInfo = {
           Ngày: sessionDate,
-          "Tên lớp": classData["Tên lớp"],
-          "Mã lớp": classData["Mã lớp"],
+          "Tên lớp": classInfo?.["Tên lớp"] || "",
+          "Mã lớp": classInfo?.["Mã lớp"] || "",
           "Class ID": currentClassId,
         };
 
@@ -273,7 +281,7 @@ const AttendanceSessionPage = () => {
               // Invoice đã paid - chỉ tạo invoice bổ sung nếu buổi này chưa được tính
               if (!sessionExistsInPaidInvoice) {
                 // Tạo invoice bổ sung với key mới: thêm "-extra" hoặc tìm invoice unpaid cho buổi mới
-                const extraKey = `${studentId}-${currentClassId}-${targetMonth}-${targetYear}-extra`;
+                const extraKey = `${studentId}-${currentClassId}-${targetMonth + 1}-${targetYear}-extra`;
                 const existingExtra = existingInvoices[extraKey];
                 
                 if (existingExtra && typeof existingExtra === "object" && existingExtra.status !== "paid") {
@@ -282,14 +290,28 @@ const AttendanceSessionPage = () => {
                   const sessionExistsInExtra = extraSessions.some((s: any) => s["Ngày"] === sessionDate);
                   if (!sessionExistsInExtra) {
                     const updatedInvoice = {
-                      ...existingExtra,
+                      id: extraKey,
+                      studentId: existingExtra.studentId || studentId,
+                      studentName: existingExtra.studentName || student?.["Họ và tên"] || record["Tên học sinh"] || "",
+                      studentCode: existingExtra.studentCode || student?.["Mã học sinh"] || "",
+                      classId: existingExtra.classId || currentClassId,
+                      className: existingExtra.className || classData["Tên lớp"],
+                      classCode: existingExtra.classCode || classData["Mã lớp"],
+                      subject: existingExtra.subject || classInfo?.["Môn học"] || "",
+                      month: existingExtra.month || targetMonth + 1,
+                      year: existingExtra.year || targetYear,
                       totalSessions: (existingExtra.totalSessions || 0) + 1,
+                      pricePerSession: existingExtra.pricePerSession || pricePerSession,
                       totalAmount: (existingExtra.totalAmount || 0) + pricePerSession,
+                      discount: existingExtra.discount || 0,
                       finalAmount: Math.max(0, (existingExtra.totalAmount || 0) + pricePerSession - (existingExtra.discount || 0)),
+                      status: existingExtra.status || "unpaid",
                       sessions: [...extraSessions, sessionInfo],
+                      isExtra: true,
+                      parentInvoiceId: key,
+                      debt: existingExtra.debt || 0,
                     };
-                    const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${extraKey}`);
-                    upsertPromises.push(update(invoiceRef, updatedInvoice));
+                    upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
                   }
                 } else if (!existingExtra) {
                   // Tạo invoice bổ sung mới
@@ -307,11 +329,13 @@ const AttendanceSessionPage = () => {
                     studentName: student?.["Họ và tên"] || record["Tên học sinh"] || "",
                     studentCode: student?.["Mã học sinh"] || "",
                     classId: currentClassId,
-                    className: classData["Tên lớp"],
-                    classCode: classData["Mã lớp"],
-                    month: targetMonth,
+                    className: classInfo?.["Tên lớp"] || "",
+                    classCode: classInfo?.["Mã lớp"] || "",
+                    subject: classInfo?.["Môn học"] || "",
+                    month: targetMonth + 1,
                     year: targetYear,
                     totalSessions: 1,
+                    pricePerSession: pricePerSession,
                     totalAmount: pricePerSession,
                     discount: 0,
                     finalAmount: pricePerSession,
@@ -321,8 +345,7 @@ const AttendanceSessionPage = () => {
                     parentInvoiceId: key, // Liên kết với invoice gốc đã paid
                     debt: debt, // Lưu công nợ từ các tháng trước
                   };
-                  const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${extraKey}`);
-                  upsertPromises.push(update(invoiceRef, newExtraInvoice));
+                  upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: extraKey, ...newExtraInvoice }));
                 }
               }
               // Không sửa invoice đã paid
@@ -335,15 +358,28 @@ const AttendanceSessionPage = () => {
             );
             
             if (!sessionExists) {
+              // Tăng total_sessions lên 1 và cập nhật total_amount
               const updatedInvoice = {
-                ...existing,
-                totalSessions: (existing.totalSessions || 0) + 1,
-                totalAmount: (existing.totalAmount || 0) + pricePerSession,
+                id: key,
+                studentId: existing.studentId || studentId,
+                studentName: existing.studentName || student?.["Họ và tên"] || record["Tên học sinh"] || "",
+                studentCode: existing.studentCode || student?.["Mã học sinh"] || "",
+                classId: existing.classId || currentClassId,
+                className: existing.className || classInfo?.["Tên lớp"] || "",
+                classCode: existing.classCode || classInfo?.["Mã lớp"] || "",
+                subject: existing.subject || classInfo?.["Môn học"] || "",
+                month: existing.month || targetMonth + 1,
+                year: existing.year || targetYear,
+                totalSessions: (existing.totalSessions || 0) + 1, // Tăng lên 1
+                pricePerSession: existing.pricePerSession || pricePerSession,
+                totalAmount: (existing.totalAmount || 0) + pricePerSession, // Cập nhật total_amount
+                discount: existing.discount || 0,
                 finalAmount: Math.max(0, (existing.totalAmount || 0) + pricePerSession - (existing.discount || 0)),
-                sessions: [...existingSessions, sessionInfo],
+                status: existing.status || "unpaid",
+                sessions: [...existingSessions, sessionInfo], // Thêm session mới vào JSONB array
+                debt: existing.debt || 0,
               };
-              const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-              upsertPromises.push(update(invoiceRef, updatedInvoice));
+              upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
             }
           } else {
             // Create new invoice
@@ -361,11 +397,13 @@ const AttendanceSessionPage = () => {
               studentName: student?.["Họ và tên"] || record["Tên học sinh"] || "",
               studentCode: student?.["Mã học sinh"] || "",
               classId: currentClassId,
-              className: classData["Tên lớp"],
-              classCode: classData["Mã lớp"],
-              month: targetMonth,
+              className: classInfo?.["Tên lớp"] || "",
+              classCode: classInfo?.["Mã lớp"] || "",
+              subject: classInfo?.["Môn học"] || "",
+              month: targetMonth + 1,
               year: targetYear,
               totalSessions: 1,
+              pricePerSession: pricePerSession,
               totalAmount: pricePerSession,
               discount: 0,
               finalAmount: pricePerSession,
@@ -373,8 +411,7 @@ const AttendanceSessionPage = () => {
               sessions: [sessionInfo],
               debt: debt, // Lưu công nợ từ các tháng trước
             };
-            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-            upsertPromises.push(update(invoiceRef, newInvoice));
+            upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: key, ...newInvoice }));
           }
         } else {
           // Học sinh vắng không phép → xóa session này khỏi invoice nếu có
@@ -391,20 +428,31 @@ const AttendanceSessionPage = () => {
               // Session đã bị xóa
               if (filteredSessions.length === 0) {
                 // Xóa invoice hoàn toàn nếu không còn session nào
-                const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-                upsertPromises.push(remove(invoiceRef));
+                upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key));
               } else {
-                // Cập nhật invoice với số buổi mới
+                // Cập nhật invoice với số buổi mới (giảm total_sessions và total_amount)
                 const newTotalAmount = pricePerSession * filteredSessions.length;
                 const updatedInvoice = {
-                  ...existing,
-                  totalSessions: filteredSessions.length,
-                  totalAmount: newTotalAmount,
+                  id: key,
+                  studentId: existing.studentId || studentId,
+                  studentName: existing.studentName || student?.["Họ và tên"] || record["Tên học sinh"] || "",
+                  studentCode: existing.studentCode || student?.["Mã học sinh"] || "",
+                  classId: existing.classId || currentClassId,
+                  className: existing.className || classInfo?.["Tên lớp"] || "",
+                  classCode: existing.classCode || classInfo?.["Mã lớp"] || "",
+                  subject: existing.subject || classInfo?.["Môn học"] || "",
+                  month: existing.month || targetMonth + 1,
+                  year: existing.year || targetYear,
+                  totalSessions: filteredSessions.length, // Giảm số buổi
+                  pricePerSession: existing.pricePerSession || pricePerSession,
+                  totalAmount: newTotalAmount, // Cập nhật total_amount
+                  discount: existing.discount || 0,
                   finalAmount: Math.max(0, newTotalAmount - (existing.discount || 0)),
-                  sessions: filteredSessions,
+                  status: existing.status || "unpaid",
+                  sessions: filteredSessions, // Cập nhật sessions array (đã xóa session)
+                  debt: existing.debt || 0,
                 };
-                const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-                upsertPromises.push(update(invoiceRef, updatedInvoice));
+                upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
               }
             }
           }
@@ -440,16 +488,16 @@ const AttendanceSessionPage = () => {
       
       // Get all monthly reports for this month
       const reportsSnapshot = await new Promise<any>((resolve) => {
-        const reportsRef = ref(database, "datasheet/Nhận_xét_tháng");
-        onValue(reportsRef, (snapshot) => resolve(snapshot.val()), { onlyOnce: true });
+        const reportsRef = "datasheet/Nhận_xét_tháng";
+        supabaseGetAll(reportsRef).then((data) => resolve(data));
       });
 
       if (!reportsSnapshot) return;
 
       // Get all attendance sessions for recalculation
       const sessionsSnapshot = await new Promise<any>((resolve) => {
-        const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-        onValue(sessionsRef, (snapshot) => resolve(snapshot.val()), { onlyOnce: true });
+        const sessionsRef = "datasheet/Điểm_danh_sessions";
+        supabaseGetAll(sessionsRef).then((data) => resolve(data));
       });
 
       const allSessions = sessionsSnapshot ? Object.entries(sessionsSnapshot).map(([id, value]: [string, any]) => ({
@@ -521,8 +569,8 @@ const AttendanceSessionPage = () => {
           classStats: updatedClassStats,
         };
 
-        const reportRef = ref(database, `datasheet/Nhận_xét_tháng/${reportId}`);
-        updatePromises.push(update(reportRef, {
+        const reportRef = "datasheet/Nhận_xét_tháng/${reportId}";
+        updatePromises.push(supabaseUpdate(reportRef, id, {
           stats: updatedStats,
           updatedAt: new Date().toISOString(),
         }));
@@ -544,9 +592,8 @@ const AttendanceSessionPage = () => {
   useEffect(() => {
     if (!classData?.id || !sessionDate) return;
 
-    const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-    const unsubscribe = onValue(timetableRef, (snapshot) => {
-      const data = snapshot.val();
+    const timetableRef = "datasheet/Thời_khoá_biểu";
+    const unsubscribe = supabaseOnValue(timetableRef, (data) => {
       if (data) {
         const entry = Object.entries(data).find(([, value]: [string, any]) => 
           value["Class ID"] === classData.id && value["Ngày"] === sessionDate
@@ -566,10 +613,9 @@ const AttendanceSessionPage = () => {
     if (!sessionDate || !classData?.id) return;
 
     const sessionMonth = dayjs(sessionDate).format("YYYY-MM");
-    const reportsRef = ref(database, "datasheet/Nhận_xét_tháng");
+    const reportsRef = "datasheet/Nhận_xét_tháng";
     
-    const unsubscribe = onValue(reportsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue(reportsRef, (data) => {
       if (data) {
         // Lọc các báo cáo của tháng này, cho lớp này, có status submitted hoặc approved
         const relevantReports = Object.entries(data)
@@ -597,146 +643,173 @@ const AttendanceSessionPage = () => {
     }
 
     // Check if session already exists for this class and date (only completed sessions)
-    // Chỉ load một lần khi component mount, không dùng realtime listener
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribeSession = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const sessions = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
+    // Load một lần khi component mount
+    const loadExistingSession = async () => {
+      try {
+        const sessionsRef = "datasheet/Điểm_danh_sessions";
+        const data = await supabaseGetAll(sessionsRef);
+        
+        if (data) {
+          const sessions = Object.entries(data).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...converted,
+            };
+          });
 
-        // Only load completed sessions
-        const existing = sessions.find(
-          (s) =>
-            s["Class ID"] === classData.id &&
-            s["Ngày"] === sessionDate &&
-            s["Trạng thái"] === "completed"
-        );
+          // Only load completed sessions
+          const existing = sessions.find(
+            (s) =>
+              s["Class ID"] === classData.id &&
+              s["Ngày"] === sessionDate &&
+              s["Trạng thái"] === "completed"
+          );
 
-        if (existing) {
-          // Chỉ update nếu chưa có existingSession hoặc sessionId khác
-          // Tránh ghi đè khi đang edit
-          if (!existingSession || existingSession.id !== existing.id) {
-            setExistingSession(existing);
-            setSessionId(existing.id);
-            
-            // Filter attendance records theo enrollment date - chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
-            const enrollments = classData["Student Enrollments"] || {};
-            const filteredAttendanceRecords = (existing["Điểm danh"] || []).filter((record: AttendanceRecord) => {
-              const studentId = record["Student ID"];
-              // Nếu không có enrollment date (backward compatibility), hiển thị học sinh
-              if (!enrollments[studentId]) return true;
+          if (existing) {
+            // Chỉ update nếu chưa có existingSession hoặc sessionId khác
+            // Tránh ghi đè khi đang edit
+            if (!existingSession || existingSession.id !== existing.id) {
+              setExistingSession(existing);
+              setSessionId(existing.id);
               
-              // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session (đăng ký ngày 27 thì điểm danh được ngày 27)
-              const enrollmentDate = enrollments[studentId].enrollmentDate;
-              return enrollmentDate <= sessionDate;
-            });
-            
-            setAttendanceRecords(filteredAttendanceRecords);
-            setLessonContent(existing["Nội dung buổi học"] || "");
-            // Load tài liệu đính kèm nội dung buổi học
-            setLessonAttachments(existing["Tài liệu nội dung"] || []);
-            setHomeworkDescription(existing["Bài tập"]?.["Mô tả"] || "");
-            setTotalExercises(existing["Bài tập"]?.["Tổng số bài"] || 0);
-            // Bug 8: Load tài liệu đính kèm từ session hiện tại
-            setHomeworkAttachments(existing["Bài tập"]?.["Tài liệu đính kèm"] || []);
-            setCurrentStep(1); // Go to step 2 to view/edit
+              // Filter attendance records theo enrollment date - chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
+              const enrollments = classData["Student Enrollments"] || {};
+              const filteredAttendanceRecords = (existing["Điểm danh"] || []).filter((record: AttendanceRecord) => {
+                const studentId = record["Student ID"];
+                // Nếu không có enrollment date (backward compatibility), hiển thị học sinh
+                if (!enrollments[studentId]) return true;
+                
+                // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session (đăng ký ngày 27 thì điểm danh được ngày 27)
+                const enrollmentDate = enrollments[studentId].enrollmentDate;
+                return enrollmentDate <= sessionDate;
+              });
+              
+              setAttendanceRecords(filteredAttendanceRecords);
+              setLessonContent(existing["Nội dung buổi học"] || "");
+              // Load tài liệu đính kèm nội dung buổi học
+              setLessonAttachments(existing["Tài liệu nội dung"] || []);
+              setHomeworkDescription(existing["Bài tập"]?.["Mô tả"] || "");
+              setTotalExercises(existing["Bài tập"]?.["Tổng số bài"] || 0);
+              // Bug 8: Load tài liệu đính kèm từ session hiện tại
+              setHomeworkAttachments(existing["Bài tập"]?.["Tài liệu đính kèm"] || []);
+              setCurrentStep(1); // Go to step 2 to view/edit
+            }
           }
         }
+      } catch (error) {
+        console.error("Error loading existing session:", error);
+      } finally {
+        setLoadingSession(false);
       }
-      setLoadingSession(false);
-    }, { onlyOnce: true }); // Chỉ load một lần
-
-    return () => {
-      unsubscribeSession();
     };
+
+    loadExistingSession();
   }, [classData, navigate, sessionDate]); // Bỏ existingSession khỏi dependency
 
   // Load students - tách riêng để có thể dùng existingSession state
   useEffect(() => {
     if (!classData) return;
     
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const allStudents = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
+    const loadStudents = async () => {
+      try {
+        const studentsRef = "datasheet/Học_sinh";
+        const data = await supabaseGetAll(studentsRef);
+        
+        if (data) {
+          const allStudents = Object.entries(data).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return {
+              id,
+              ...converted,
+            };
+          });
 
-        // Filter students by enrollment date
-        const enrollments = classData["Student Enrollments"] || {};
-        const classStudents = allStudents
-          .filter((s) => {
-            if (!classData["Student IDs"]?.includes(s.id)) return false;
-            
-            // Nếu đang xem/sửa session cũ (existingSession exists), hiển thị TẤT CẢ học sinh hiện tại của lớp
-            // để có thể thêm học sinh mới vào điểm danh
-            if (existingSession) return true;
-            
-            // Nếu tạo mới session, chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
-            if (!enrollments[s.id]) return true;
-            
-            const enrollmentDate = enrollments[s.id].enrollmentDate;
-            return enrollmentDate <= sessionDate;
-          })
-          .map((s) => ({
-            ...s,
-            "SĐT phụ huynh":
-              s["SĐT phụ huynh"] ||
-              s["Số điện thoại phụ huynh"] ||
-              s["SĐT phụ huynh 1"] ||
-              s["SDT phụ huynh"] ||
-              s["Parent phone"] ||
-              "",
-          }));
+          // Filter students by enrollment date
+          const enrollments = classData["Student Enrollments"] || {};
+          const classStudents = allStudents
+            .filter((s) => {
+              if (!classData["Student IDs"]?.includes(s.id)) return false;
+              
+              // Nếu đang xem/sửa session cũ (existingSession exists), hiển thị TẤT CẢ học sinh hiện tại của lớp
+              // để có thể thêm học sinh mới vào điểm danh
+              if (existingSession) return true;
+              
+              // Nếu tạo mới session, chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
+              if (!enrollments[s.id]) return true;
+              
+              const enrollmentDate = enrollments[s.id].enrollmentDate;
+              return enrollmentDate <= sessionDate;
+            })
+            .map((s) => ({
+              ...s,
+              "SĐT phụ huynh":
+                s["SĐT phụ huynh"] ||
+                s["Số điện thoại phụ huynh"] ||
+                s["SĐT phụ huynh 1"] ||
+                s["SDT phụ huynh"] ||
+                s["Parent phone"] ||
+                "",
+            }));
 
-        setStudents(classStudents);
+          setStudents(classStudents);
+        }
+      } catch (error) {
+        console.error("Error loading students:", error);
       }
-    }, { onlyOnce: true }); // Chỉ load một lần
-
-    return () => {
-      unsubscribeStudents();
     };
+
+    loadStudents();
   }, [classData, sessionDate, existingSession]); // Thêm existingSession để reload students khi có session
 
   // Bug 9: Load bài tập buổi trước
   useEffect(() => {
     if (!classData?.id) return;
 
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        // Lấy tất cả sessions của lớp này
-        const classSessions = Object.entries(data)
-          .map(([id, value]: [string, any]) => ({
-            id,
-            ...value,
-          }))
-          .filter((s) => 
-            s["Class ID"] === classData.id && 
-            s["Trạng thái"] === "completed" &&
-            s["Ngày"] < sessionDate // Chỉ lấy buổi trước
-          )
-          .sort((a, b) => b["Ngày"].localeCompare(a["Ngày"])); // Sắp xếp giảm dần
+    const loadPreviousHomework = async () => {
+      try {
+        const sessionsRef = "datasheet/Điểm_danh_sessions";
+        const data = await supabaseGetAll(sessionsRef);
+        
+        if (data) {
+          // Lấy tất cả sessions của lớp này
+          const classSessions = Object.entries(data)
+            .map(([id, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+              return {
+                id,
+                ...converted,
+              };
+            })
+            .filter((s) => 
+              s["Class ID"] === classData.id && 
+              s["Trạng thái"] === "completed" &&
+              s["Ngày"] < sessionDate // Chỉ lấy buổi trước
+            )
+            .sort((a, b) => b["Ngày"].localeCompare(a["Ngày"])); // Sắp xếp giảm dần
 
-        if (classSessions.length > 0) {
-          const lastSession = classSessions[0];
-          if (lastSession["Bài tập"]) {
-            setPreviousHomework({
-              description: lastSession["Bài tập"]["Mô tả"] || "",
-              totalExercises: lastSession["Bài tập"]["Tổng số bài"] || 0,
-              attachments: lastSession["Bài tập"]["Tài liệu đính kèm"] || [],
-              date: lastSession["Ngày"],
-            });
+          if (classSessions.length > 0) {
+            const lastSession = classSessions[0];
+            if (lastSession["Bài tập"]) {
+              setPreviousHomework({
+                description: lastSession["Bài tập"]["Mô tả"] || "",
+                totalExercises: lastSession["Bài tập"]["Tổng số bài"] || 0,
+                attachments: lastSession["Bài tập"]["Tài liệu đính kèm"] || [],
+                date: lastSession["Ngày"],
+              });
+            }
+          } else {
+            setPreviousHomework(null);
           }
+        } else {
+          setPreviousHomework(null);
         }
+      } catch (error) {
+        console.error("Error loading previous homework:", error);
       }
-    }, { onlyOnce: true });
+    };
+
+    loadPreviousHomework();
   }, [classData?.id, sessionDate]);
 
   // Bug 8: Handle upload attachment
@@ -845,8 +918,8 @@ const AttendanceSessionPage = () => {
     // Lưu ngay vào Firebase nếu đã có session
     if (sessionId) {
       try {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh`);
-        await set(sessionRef, updatedRecords);
+        const sessionRef = "datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh";
+        await supabaseSet(sessionRef, updatedRecords);
         message.success(`Đã cập nhật ${field}`);
       } catch (error) {
         console.error("Error updating check time:", error);
@@ -1010,22 +1083,18 @@ const AttendanceSessionPage = () => {
       )
     );
 
-    // Auto-save to Firebase if session exists
+    // Auto-save to Supabase if session exists
     if (sessionId && existingSession) {
       try {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
-        const updatedRecord = attendanceRecords.find(r => r["Student ID"] === studentId);
-        if (updatedRecord) {
-          const updatedAttendance = attendanceRecords.map(r => 
-            r["Student ID"] === studentId 
-              ? { ...r, "Giờ check-out": checkOutTime }
-              : r
-          );
-          await update(sessionRef, {
-            "Điểm danh": updatedAttendance,
-          });
-          message.success("Đã ghi nhận giờ check-out");
-        }
+        const updatedAttendance = attendanceRecords.map((record) =>
+          record["Student ID"] === studentId
+            ? { ...record, "Giờ check-out": checkOutTime }
+            : record
+        );
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, {
+          "Điểm danh": updatedAttendance,
+        });
+        message.success("Đã ghi nhận giờ check-out");
       } catch (error) {
         console.error("Error saving check-out time:", error);
         message.error("Không thể lưu giờ check-out");
@@ -1063,8 +1132,7 @@ const AttendanceSessionPage = () => {
     // Auto-save to Firebase if session already exists
     if (sessionId && existingSession) {
       try {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
-        await update(sessionRef, {
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, {
           "Điểm danh": updatedRecords,
         });
         message.success("Đã cập nhật bài tập", 1);
@@ -1137,8 +1205,7 @@ const AttendanceSessionPage = () => {
     if (sessionId && existingSession) {
       try {
         console.log("💾 Saving to Firebase:", { sessionId, updatedRecords });
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
-        await update(sessionRef, {
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, {
           "Điểm danh": updatedRecords,
         });
         console.log("✅ Successfully saved to Firebase");
@@ -1173,8 +1240,7 @@ const AttendanceSessionPage = () => {
     // Auto-save to Firebase if session already exists
     if (sessionId && existingSession) {
       try {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
-        await update(sessionRef, {
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, {
           "Điểm danh": updatedRecords,
         });
         message.success("Đã cập nhật điểm thưởng", 1);
@@ -1208,9 +1274,8 @@ const AttendanceSessionPage = () => {
       return;
     }
 
-    const historyRef = ref(database, "datasheet/Đổi_thưởng");
-    const unsubscribe = onValue(historyRef, (snapshot) => {
-      const data = snapshot.val();
+    const historyRef = "datasheet/Đổi_thưởng";
+    const unsubscribe = supabaseOnValue("history", (data) => {
       if (data) {
         const historyList = Object.entries(data)
           .map(([id, value]) => ({
@@ -1241,11 +1306,11 @@ const AttendanceSessionPage = () => {
     const calculateBonus = async () => {
       try {
         // Tính tổng điểm thưởng từ tất cả buổi học
-        const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
+        const sessionsRef = "datasheet/Điểm_danh_sessions";
         const sessionsSnapshot = await new Promise<any>((resolve) => {
-          onValue(sessionsRef, (snapshot) => {
+          supabaseGetAll(sessionsRef).then((snapshot) => {
             resolve(snapshot.val());
-          }, { onlyOnce: true });
+          });
         });
 
         let calculatedTotalBonus = 0;
@@ -1262,11 +1327,11 @@ const AttendanceSessionPage = () => {
         }
 
         // Trừ đi tổng điểm đã đổi
-        const redeemHistoryRef = ref(database, "datasheet/Đổi_thưởng");
+        const redeemHistoryRef = "datasheet/Đổi_thưởng";
         const redeemSnapshot = await new Promise<any>((resolve) => {
-          onValue(redeemHistoryRef, (snapshot) => {
+          supabaseGetAll(redeemHistoryRef).then((snapshot) => {
             resolve(snapshot.val());
-          }, { onlyOnce: true });
+          });
         });
 
         let totalRedeemed = 0;
@@ -1304,11 +1369,11 @@ const AttendanceSessionPage = () => {
       }
 
       // ✅ FIX: Tính tổng điểm thưởng từ tất cả buổi học
-      const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
+      const sessionsRef = "datasheet/Điểm_danh_sessions";
       const sessionsSnapshot = await new Promise<any>((resolve) => {
-        onValue(sessionsRef, (snapshot) => {
+        supabaseGetAll(sessionsRef).then((snapshot) => {
           resolve(snapshot.val());
-        }, { onlyOnce: true });
+        });
       });
 
       let calculatedTotalBonus = 0;
@@ -1325,11 +1390,11 @@ const AttendanceSessionPage = () => {
       }
 
       // ✅ FIX: Trừ đi tổng điểm đã đổi trước đó
-      const redeemHistoryRef = ref(database, "datasheet/Đổi_thưởng");
+      const redeemHistoryRef = "datasheet/Đổi_thưởng";
       const redeemSnapshot = await new Promise<any>((resolve) => {
-        onValue(redeemHistoryRef, (snapshot) => {
+        supabaseGetAll(redeemHistoryRef).then((snapshot) => {
           resolve(snapshot.val());
-        }, { onlyOnce: true });
+        });
       });
 
       let totalRedeemed = 0;
@@ -1370,9 +1435,10 @@ const AttendanceSessionPage = () => {
         Timestamp: redeemTime,
       };
 
-      const redeemHistoryRef2 = ref(database, "datasheet/Đổi_thưởng");
-      const newRedeemRef = push(redeemHistoryRef2);
-      await set(newRedeemRef, redeemData);
+      const redeemHistoryRef2 = "datasheet/Đổi_thưởng";
+      const newRedeemId = crypto.randomUUID();
+      redeemData.id = newRedeemId;
+      await supabaseSet("datasheet/Đổi_thưởng", redeemData);
 
       message.success(`Đã đổi ${pointsToRedeem} điểm thưởng. Còn lại: ${newTotalBonus.toFixed(1)} điểm`);
       setIsRedeemModalOpen(false);
@@ -1410,11 +1476,11 @@ const AttendanceSessionPage = () => {
       }
 
       // Get current student data
-      const studentRef = ref(database, `datasheet/Danh_sách_học_sinh/${selectedStudentForHistory.id}`);
+      const studentRef = "datasheet/Danh_sách_học_sinh/${selectedStudentForHistory.id}";
       const studentSnapshot = await new Promise<any>((resolve) => {
-        onValue(studentRef, (snapshot) => {
+        supabaseGetAll(studentRef).then((snapshot) => {
           resolve(snapshot.val());
-        }, { onlyOnce: true });
+        });
       });
 
       const currentTotalBonus = Number(studentSnapshot?.["Tổng điểm thưởng"] || 0);
@@ -1435,9 +1501,9 @@ const AttendanceSessionPage = () => {
       const oldTotalBeforeRedeem = Number(editingRedeem["Tổng điểm trước khi đổi"] || 0);
 
       // Update redeem record
-      const redeemRef = ref(database, `datasheet/Đổi_thưởng/${editingRedeem.id}`);
+      const redeemRef = "datasheet/Đổi_thưởng/${editingRedeem.id}";
       const updateTime = new Date().toISOString();
-      await update(redeemRef, {
+      await supabaseUpdate(redeemRef, id, {
         "Điểm đổi": newPoints,
         "Ghi chú": newNote,
         "Tổng điểm trước khi đổi": oldTotalBeforeRedeem,
@@ -1447,7 +1513,7 @@ const AttendanceSessionPage = () => {
       });
 
       // Update student's total bonus points
-      await update(studentRef, {
+      await supabaseUpdate(studentRef, id, {
         "Tổng điểm thưởng": newTotalBonus,
       });
 
@@ -1467,11 +1533,11 @@ const AttendanceSessionPage = () => {
 
     try {
       // Get current student data
-      const studentRef = ref(database, `datasheet/Danh_sách_học_sinh/${selectedStudentForHistory.id}`);
+      const studentRef = "datasheet/Danh_sách_học_sinh/${selectedStudentForHistory.id}";
       const studentSnapshot = await new Promise<any>((resolve) => {
-        onValue(studentRef, (snapshot) => {
+        supabaseGetAll(studentRef).then((snapshot) => {
           resolve(snapshot.val());
-        }, { onlyOnce: true });
+        });
       });
 
       const currentTotalBonus = Number(studentSnapshot?.["Tổng điểm thưởng"] || 0);
@@ -1479,11 +1545,11 @@ const AttendanceSessionPage = () => {
       const newTotalBonus = currentTotalBonus + pointsToRestore;
 
       // Delete redeem record
-      const redeemRef = ref(database, `datasheet/Đổi_thưởng/${redeemRecord.id}`);
-      await remove(redeemRef);
+      const redeemRef = "datasheet/Đổi_thưởng/${redeemRecord.id}";
+      await supabaseRemove(redeemRef, id);
 
       // Restore student's total bonus points
-      await update(studentRef, {
+      await supabaseUpdate(studentRef, id, {
         "Tổng điểm thưởng": newTotalBonus,
       });
 
@@ -1577,7 +1643,7 @@ const AttendanceSessionPage = () => {
           database,
           `datasheet/Điểm_danh_sessions/${sessionId}`
         );
-        await update(sessionRef, cleanedData);
+        await supabaseUpdate(sessionRef, id, cleanedData);
       } else {
         // Create new session (only when completing)
         // ✅ Lấy Teacher ID từ classData (đúng giáo viên của lớp), fallback sang userProfile nếu thiếu
@@ -1635,10 +1701,11 @@ const AttendanceSessionPage = () => {
         };
 
         const cleanedData = cleanData(sessionData);
-        const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-        const newSessionRef = push(sessionsRef);
-        await set(newSessionRef, cleanedData);
-        setSessionId(newSessionRef.key || null);
+        // Generate new session ID
+        const newSessionId = crypto.randomUUID();
+        cleanedData.id = newSessionId;
+        await supabaseSet("datasheet/Điểm_danh_sessions", cleanedData);
+        setSessionId(newSessionId);
       }
 
       // After saving attendance, sync invoices ONLY for students in this class session

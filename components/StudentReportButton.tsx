@@ -3,6 +3,7 @@ import { Button } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import { ref, onValue } from 'firebase/database';
 import { database } from '../firebase';
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from '@/utils/supabaseHelpers';
 import { AttendanceSession } from '../types';
 import StudentReport from './StudentReport';
 import dayjs from 'dayjs';
@@ -32,14 +33,35 @@ const StudentReportButton = ({ student, type = 'default', size = 'middle', initi
         if (!isModalOpen) return;
 
         setLoading(true);
-        const sessionsRef = ref(database, 'datasheet/Điểm_danh_sessions');
-        const unsubscribe = onValue(sessionsRef, (snapshot) => {
-            const data = snapshot.val();
+        const loadSessions = async () => {
+            const data = await supabaseGetAll('datasheet/Điểm_danh_sessions');
             if (data) {
-                const sessionsList = Object.entries(data).map(([id, value]) => ({
-                    id,
-                    ...(value as Omit<AttendanceSession, 'id'>)
-                }));
+                const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+                    const converted = convertFromSupabaseFormat(value, 'diem_danh_sessions');
+                    return {
+                        id,
+                        ...converted,
+                    } as AttendanceSession;
+                });
+                setSessions(sessionsList);
+            } else {
+                setSessions([]);
+            }
+            setLoading(false);
+        };
+
+        loadSessions();
+
+        // Subscribe to real-time updates
+        const unsubscribe = supabaseOnValue('datasheet/Điểm_danh_sessions', (data) => {
+            if (data) {
+                const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+                    const converted = convertFromSupabaseFormat(value, 'diem_danh_sessions');
+                    return {
+                        id,
+                        ...converted,
+                    } as AttendanceSession;
+                });
                 setSessions(sessionsList);
             } else {
                 setSessions([]);
