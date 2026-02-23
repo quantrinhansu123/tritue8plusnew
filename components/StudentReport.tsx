@@ -120,10 +120,10 @@ const StudentReport = ({
             return converted["Class ID"] === classId || converted.class_id === classId || item.class_id === classId;
           });
           if (scoreEntry) {
-            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap");
+            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap") as any;
             relevantScores[classId] = {
-              columns: converted.columns || scoreEntry.columns || [],
-              scores: converted.scores || scoreEntry.scores || [],
+              columns: converted?.columns || (scoreEntry as any)?.columns || [],
+              scores: converted?.scores || (scoreEntry as any)?.scores || [],
             };
           }
         });
@@ -143,10 +143,10 @@ const StudentReport = ({
             return converted["Class ID"] === classId || converted.class_id === classId || item.class_id === classId;
           });
           if (scoreEntry) {
-            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap");
+            const converted = convertFromSupabaseFormat(scoreEntry, "diem_tu_nhap") as any;
             relevantScores[classId] = {
-              columns: converted.columns || scoreEntry.columns || [],
-              scores: converted.scores || scoreEntry.scores || [],
+              columns: converted?.columns || (scoreEntry as any)?.columns || [],
+              scores: converted?.scores || (scoreEntry as any)?.scores || [],
             };
           }
         });

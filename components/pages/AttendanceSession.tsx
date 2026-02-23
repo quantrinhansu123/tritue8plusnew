@@ -311,7 +311,7 @@ const AttendanceSessionPage = () => {
                       parentInvoiceId: key,
                       debt: existingExtra.debt || 0,
                     };
-                    upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
+                    upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
                   }
                 } else if (!existingExtra) {
                   // Tạo invoice bổ sung mới
@@ -345,7 +345,7 @@ const AttendanceSessionPage = () => {
                     parentInvoiceId: key, // Liên kết với invoice gốc đã paid
                     debt: debt, // Lưu công nợ từ các tháng trước
                   };
-                  upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: extraKey, ...newExtraInvoice }));
+                  upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: extraKey, ...newExtraInvoice }).then(() => {}));
                 }
               }
               // Không sửa invoice đã paid
@@ -379,7 +379,7 @@ const AttendanceSessionPage = () => {
                 sessions: [...existingSessions, sessionInfo], // Thêm session mới vào JSONB array
                 debt: existing.debt || 0,
               };
-              upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
+              upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
             }
           } else {
             // Create new invoice
@@ -411,7 +411,7 @@ const AttendanceSessionPage = () => {
               sessions: [sessionInfo],
               debt: debt, // Lưu công nợ từ các tháng trước
             };
-            upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: key, ...newInvoice }));
+            upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: key, ...newInvoice }).then(() => {}));
           }
         } else {
           // Học sinh vắng không phép → xóa session này khỏi invoice nếu có
@@ -428,7 +428,7 @@ const AttendanceSessionPage = () => {
               // Session đã bị xóa
               if (filteredSessions.length === 0) {
                 // Xóa invoice hoàn toàn nếu không còn session nào
-                upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key));
+                upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key).then(() => {}));
               } else {
                 // Cập nhật invoice với số buổi mới (giảm total_sessions và total_amount)
                 const newTotalAmount = pricePerSession * filteredSessions.length;
@@ -452,7 +452,7 @@ const AttendanceSessionPage = () => {
                   sessions: filteredSessions, // Cập nhật sessions array (đã xóa session)
                   debt: existing.debt || 0,
                 };
-                upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice));
+                upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
               }
             }
           }
@@ -569,11 +569,10 @@ const AttendanceSessionPage = () => {
           classStats: updatedClassStats,
         };
 
-        const reportRef = "datasheet/Nhận_xét_tháng/${reportId}";
-        updatePromises.push(supabaseUpdate(reportRef, id, {
+        updatePromises.push(supabaseUpdate("datasheet/Nhận_xét_tháng", reportId, {
           stats: updatedStats,
           updatedAt: new Date().toISOString(),
-        }));
+        }).then(() => {}));
       });
 
       await Promise.all(updatePromises);
@@ -1435,10 +1434,9 @@ const AttendanceSessionPage = () => {
         Timestamp: redeemTime,
       };
 
-      const redeemHistoryRef2 = "datasheet/Đổi_thưởng";
       const newRedeemId = crypto.randomUUID();
-      redeemData.id = newRedeemId;
-      await supabaseSet("datasheet/Đổi_thưởng", redeemData);
+      const redeemDataWithId = { ...redeemData, id: newRedeemId };
+      await supabaseSet("datasheet/Đổi_thưởng", redeemDataWithId);
 
       message.success(`Đã đổi ${pointsToRedeem} điểm thưởng. Còn lại: ${newTotalBonus.toFixed(1)} điểm`);
       setIsRedeemModalOpen(false);
@@ -1501,9 +1499,8 @@ const AttendanceSessionPage = () => {
       const oldTotalBeforeRedeem = Number(editingRedeem["Tổng điểm trước khi đổi"] || 0);
 
       // Update redeem record
-      const redeemRef = "datasheet/Đổi_thưởng/${editingRedeem.id}";
       const updateTime = new Date().toISOString();
-      await supabaseUpdate(redeemRef, id, {
+      await supabaseUpdate("datasheet/Đổi_thưởng", editingRedeem.id, {
         "Điểm đổi": newPoints,
         "Ghi chú": newNote,
         "Tổng điểm trước khi đổi": oldTotalBeforeRedeem,
@@ -1513,7 +1510,7 @@ const AttendanceSessionPage = () => {
       });
 
       // Update student's total bonus points
-      await supabaseUpdate(studentRef, id, {
+      await supabaseUpdate("datasheet/Danh_sách_học_sinh", selectedStudentForHistory.id, {
         "Tổng điểm thưởng": newTotalBonus,
       });
 
@@ -1545,11 +1542,10 @@ const AttendanceSessionPage = () => {
       const newTotalBonus = currentTotalBonus + pointsToRestore;
 
       // Delete redeem record
-      const redeemRef = "datasheet/Đổi_thưởng/${redeemRecord.id}";
-      await supabaseRemove(redeemRef, id);
+      await supabaseRemove("datasheet/Đổi_thưởng", redeemRecord.id);
 
       // Restore student's total bonus points
-      await supabaseUpdate(studentRef, id, {
+      await supabaseUpdate("datasheet/Danh_sách_học_sinh", selectedStudentForHistory.id, {
         "Tổng điểm thưởng": newTotalBonus,
       });
 
@@ -1639,11 +1635,7 @@ const AttendanceSessionPage = () => {
         };
 
         const cleanedData = cleanData(updateData);
-        const sessionRef = ref(
-          database,
-          `datasheet/Điểm_danh_sessions/${sessionId}`
-        );
-        await supabaseUpdate(sessionRef, id, cleanedData);
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, cleanedData);
       } else {
         // Create new session (only when completing)
         // ✅ Lấy Teacher ID từ classData (đúng giáo viên của lớp), fallback sang userProfile nếu thiếu

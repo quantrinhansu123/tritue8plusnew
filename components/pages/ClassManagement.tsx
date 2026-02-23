@@ -165,7 +165,7 @@ const ClassManagementContent = () => {
         const sessionsList = Object.entries(data)
           .map(([id, value]) => ({
             id,
-            ...value,
+            ...(typeof value === "object" && value !== null ? value : {}),
           }))
           .filter((session) => {
             const sessionClassId = session["Class ID"];
@@ -174,7 +174,7 @@ const ClassManagementContent = () => {
               sessionClassId === viewingClass.id ||
               sessionClassCode === viewingClass["Mã lớp"]
             );
-          });
+          }) as AttendanceSession[];
         setClassSessionHistory(sessionsList);
       } else {
         setClassSessionHistory([]);

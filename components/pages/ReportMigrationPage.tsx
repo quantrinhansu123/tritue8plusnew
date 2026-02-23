@@ -274,7 +274,7 @@ const ReportMigrationPage = () => {
   };
 
   return (
-    <WrapperContent>
+    <WrapperContent title="Chuyển Dữ Liệu Báo Cáo Học Tập">
       <Card>
         <Title level={2}>
           <DatabaseOutlined /> Chuyển Dữ Liệu Báo Cáo Học Tập

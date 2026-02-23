@@ -1193,11 +1193,7 @@ const InvoicePage = () => {
             const group = groupedByStudent.get(String(studentIdKey));
             if (!group) return;
             group.invoices.forEach((invoice) => {
-              const invoiceRef = ref(
-                database,
-                `datasheet/Phiếu_thu_học_phí/${invoice.id}`
-              );
-              deletePromises.push(remove(invoiceRef));
+              deletePromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí", invoice.id).then(() => {}));
               totalDeleted += 1;
             });
           });
@@ -1242,10 +1238,9 @@ const InvoicePage = () => {
           for (const invoiceId of selectedPaidRowKeys) {
             const invoiceIdStr = String(invoiceId);
             
-            const invoiceSnapshot = await get(invoiceRef);
+            const invoiceData = await supabaseGetById("datasheet/Phiếu_thu_học_phí", invoiceIdStr);
             
-            if (invoiceSnapshot.exists()) {
-              const invoiceData = invoiceSnapshot.val();
+            if (invoiceData) {
               invoicesToDelete.push({
                 id: invoiceIdStr,
                 studentId: invoiceData.studentId || invoiceIdStr.split("-")[0],
@@ -1258,12 +1253,8 @@ const InvoicePage = () => {
           // Xóa các phiếu
           const deletePromises = selectedPaidRowKeys.map(async (invoiceId) => {
             const invoiceIdStr = String(invoiceId);
-            const invoiceRef = ref(
-              database,
-              `datasheet/Phiếu_thu_học_phí/${invoiceIdStr}`
-            );
             // Permanently delete
-            await remove(invoiceRef);
+            await supabaseRemove("datasheet/Phiếu_thu_học_phí", invoiceIdStr);
           });
 
           await Promise.all(deletePromises);
@@ -1308,8 +1299,8 @@ const InvoicePage = () => {
         
         if (isAfterDeleted && data.debt !== undefined) {
           // Xóa trường debt để tự tính lại từ getStudentDebtBreakdown
-          
-          updatePromises.push(update(updateRef, { debt: null }));
+          const invoiceId = key;
+          updatePromises.push(supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, { debt: null }).then(() => {}));
         }
       }
     });
@@ -1323,20 +1314,11 @@ const InvoicePage = () => {
   // Delete single invoice - permanently remove from database
   const handleDeleteInvoice = async (invoiceId: string) => {
     try {
-      const invoiceRef = ref(
-        database,
-        `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-      );
-      
       // Lấy thông tin phiếu trước khi xóa để cập nhật nợ lũy kế cho các phiếu tháng sau
-      const invoiceSnapshot = await get(invoiceRef);
-      let deletedInvoiceData: any = null;
-      if (invoiceSnapshot.exists()) {
-        deletedInvoiceData = invoiceSnapshot.val();
-      }
+      const deletedInvoiceData = await supabaseGetById("datasheet/Phiếu_thu_học_phí", invoiceId);
       
-      // Permanently delete the invoice from Firebase
-      await remove(invoiceRef);
+      // Permanently delete the invoice from Supabase
+      await supabaseRemove("datasheet/Phiếu_thu_học_phí", invoiceId);
       
       // Nếu có thông tin phiếu đã xóa, cập nhật lại nợ lũy kế cho các phiếu tháng sau
       if (deletedInvoiceData) {
@@ -1374,8 +1356,7 @@ const InvoicePage = () => {
           // Step 2: Xóa tất cả invoice
           message.loading({ content: `Đang xóa ${Object.keys(allInvoices).length} invoice cũ...`, key: "resetInvoices" });
           const deletePromises = Object.keys(allInvoices).map((key) => {
-            
-            return remove(invoiceRef);
+            return supabaseRemove("datasheet/Phiếu_thu_học_phí", key);
           });
           await Promise.all(deletePromises);
           
@@ -1518,10 +1499,10 @@ const InvoicePage = () => {
             // Add debt to invoice
             invoice.debt = debt;
             
-            // Create invoice in Firebase
-            
+            // Create invoice in Supabase
+            const invoiceId = invoice.id;
             createPromises.push(
-              set(invoiceRef, invoice).then(() => {
+              supabaseSet("datasheet/Phiếu_thu_học_phí", invoiceId, invoice).then(() => {
                 createdCount++;
               })
             );
@@ -1581,8 +1562,7 @@ const InvoicePage = () => {
 
           if (invoicesToDelete.length > 0) {
             const deleteInvoicePromises = invoicesToDelete.map((key) => {
-              
-              return remove(invoiceRef);
+              return supabaseRemove("datasheet/Phiếu_thu_học_phí", key);
             });
             await Promise.all(deleteInvoicePromises);
             console.log(`✅ Deleted ${invoicesToDelete.length} invoices`);
@@ -1606,8 +1586,7 @@ const InvoicePage = () => {
 
           if (sessionsToDelete.length > 0) {
             const deleteSessionPromises = sessionsToDelete.map((sessionId) => {
-              
-              return remove(sessionRef);
+              return supabaseRemove("datasheet/Điểm_danh_sessions", sessionId);
             });
             await Promise.all(deleteSessionPromises);
             console.log(`✅ Deleted ${sessionsToDelete.length} sessions`);
@@ -1630,11 +1609,7 @@ const InvoicePage = () => {
   // Revert paid invoice back to unpaid status
   const handleRevertToUnpaid = async (invoiceId: string) => {
     try {
-      const invoiceRef = ref(
-        database,
-        `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-      );
-      await update(invoiceRef, {
+      await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, {
         status: "unpaid",
         paidAt: null,
         paidBy: null,
@@ -1670,14 +1645,9 @@ const InvoicePage = () => {
             return;
           }
 
-          const invoiceRef = ref(
-            database,
-            `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-          );
-
           // When marking as paid, save complete invoice data
           if (status === "paid") {
-            await update(invoiceRef, {
+            await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, {
               status,
               studentId: invoice.studentId,
               studentName: invoice.studentName,
@@ -1698,7 +1668,7 @@ const InvoicePage = () => {
             });
           } else {
             // Only allow unpaid if not yet marked as paid
-            await update(invoiceRef, {
+            await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, {
               status,
             });
           }
@@ -1747,11 +1717,7 @@ const InvoicePage = () => {
           0,
           Math.round((invoice.totalSessions * unitPrice) - (invoice.discount || 0))
         );
-        const invoiceRef = ref(
-          database,
-          `datasheet/Phiếu_thu_học_phí/${invoice.id}`
-        );
-        return update(invoiceRef, {
+        return supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoice.id, {
           totalAmount: newInvoiceTotal,
           finalAmount: newFinal,
         }).then(() => ({
@@ -1929,7 +1895,7 @@ const InvoicePage = () => {
 
       // Lưu vào database - nhưng không tự động tính lại số buổi
       const safeData = sanitizeObjectKeys(updateData);
-      await set(invoiceRef, safeData);
+      await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, safeData);
       message.success("Đã cập nhật phiếu thu học phí");
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -2009,7 +1975,7 @@ const InvoicePage = () => {
       };
 
       const safeData = sanitizeObjectKeys(resetData);
-      await set(invoiceRef, safeData);
+      await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, safeData);
       message.success("Đã reset phiếu thu về giá trị ban đầu");
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -2047,16 +2013,12 @@ const InvoicePage = () => {
       const finalAmount = Math.max(0, (invoice.totalSessions * unitPrice) - discount);
 
       // Lưu vào database
-      const invoiceRef = ref(
-        database,
-        `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-      );
       const updateData =
         typeof currentData === "object"
           ? { ...currentData, discount, finalAmount }
           : { status: currentStatus || "unpaid", discount, finalAmount };
 
-      await update(invoiceRef, updateData);
+      await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, updateData);
       message.success("Đã cập nhật miễn giảm");
 
       // Trigger recalculation of table
@@ -2132,7 +2094,7 @@ const InvoicePage = () => {
       };
 
       const safeData = sanitizeObjectKeys(updateData);
-      await set(salaryRef, safeData);
+      await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, safeData);
       message.success("Đã cập nhật phiếu lương giáo viên");
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -2168,20 +2130,15 @@ const InvoicePage = () => {
             return;
           }
 
-          const salaryRef = ref(
-            database,
-            `datasheet/Phiếu_lương_giáo_viên/${salaryId}`
-          );
-
           console.log(
-            "📍 Firebase path:",
+            "📍 Supabase path:",
             `datasheet/Phiếu_lương_giáo_viên/${salaryId}`
           );
 
           // When marking as paid, save complete salary data
           if (status === "paid") {
             const teacher = teachers.find((t) => t.id === salary.teacherId);
-            await update(salaryRef, {
+            await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, {
               status,
               teacherId: salary.teacherId,
               teacherName: salary.teacherName,
@@ -2212,7 +2169,7 @@ const InvoicePage = () => {
             });
           } else {
             // Only allow unpaid if not yet marked as paid
-            await update(salaryRef, { status });
+            await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, { status });
           }
 
           console.log("✅ Firebase updated successfully");
@@ -2439,7 +2396,7 @@ const InvoicePage = () => {
         }
 
         if (Object.keys(updateFields).length > 0) {
-          await update(invoiceRef, updateFields);
+          await supabaseUpdate("datasheet/Phiếu_thu_học_phí", updatedData.id, updateFields);
           message.success('Đã lưu thay đổi tự động');
 
           // Update local state immediately so print function uses new data
@@ -4507,13 +4464,9 @@ const InvoicePage = () => {
   const handleStudentImageUpload = async (file: File, invoiceId: string) => {
     try {
       const base64 = await getBase64(file);
-      const invoiceRef = ref(
-        database,
-        `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-      );
       const currentData = studentInvoiceStatus[invoiceId] || {};
 
-      await update(invoiceRef, {
+      await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, {
         ...currentData,
         invoiceImage: base64,
       });
@@ -4531,13 +4484,9 @@ const InvoicePage = () => {
   const handleTeacherImageUpload = async (file: File, salaryId: string) => {
     try {
       const base64 = await getBase64(file);
-      const salaryRef = ref(
-        database,
-        `datasheet/Phiếu_lương_giáo_viên/${salaryId}`
-      );
       const currentData = teacherSalaryStatus[salaryId] || {};
 
-      await update(salaryRef, {
+      await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, {
         ...currentData,
         invoiceImage: base64,
       });

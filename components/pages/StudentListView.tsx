@@ -831,7 +831,7 @@ const StudentListView: React.FC = () => {
           }
 
           // Delete from Supabase
-          await supabaseRemove(`datasheet/Học_sinh/${student.id}`);
+          await supabaseRemove("datasheet/Học_sinh", student.id);
           setStudents(students.filter((s) => s.id !== student.id));
           message.success("Xóa học sinh thành công!");
         } catch (error) {
@@ -862,7 +862,7 @@ const StudentListView: React.FC = () => {
           }
 
           for (const studentId of selectedRowKeys) {
-            await supabaseRemove(`datasheet/Học_sinh/${studentId}`);
+            await supabaseRemove("datasheet/Học_sinh", String(studentId));
           }
 
           setStudents(students.filter((s) => !selectedRowKeys.includes(s.id)));
@@ -1614,7 +1614,7 @@ const StudentListView: React.FC = () => {
       console.log("🗑️ Deleting extension record:", recordId);
 
       // Delete from Supabase Extension History table
-      await supabaseRemove(`datasheet/Gia_hạn/${recordId}`);
+      await supabaseRemove("datasheet/Gia_hạn", recordId);
       console.log("✅ Extension record deleted from Supabase");
 
       // Recalculate total extended hours from remaining records in Supabase
@@ -2637,7 +2637,7 @@ const StudentListView: React.FC = () => {
                 className="w-full"
                 showSearch
                 filterOption={(input, option) => {
-                  const label = option?.label || option?.children || "";
+                  const label = option?.label || "";
                   return String(label).toLowerCase().includes(input.toLowerCase());
                 }}
                 options={classes

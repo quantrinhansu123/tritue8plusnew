@@ -65,5 +65,5 @@ export const getTableName = (firebasePath: string): string => {
 
 // Helper to check if Supabase is configured
 export const isSupabaseConfigured = () => {
-  return supabase !== null && SUPABASE_URL !== "";
+  return supabase !== null && SUPABASE_URL.length > 0;
 };
