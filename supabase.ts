@@ -29,6 +29,7 @@ export const getTableName = (firebasePath: string): string => {
     "datasheet/Lịch_sử_sao_thưởng": "lich_su_sao_thuong", // Stars History
     "datasheet/Điểm_tự_nhập": "diem_tu_nhap", // Custom Scores
     "datasheet/Danh_sách_học_sinh": "hoc_sinh", // Alias for Học_sinh
+    "datasheet/Thời_khoá_biểu": "thoi_khoa_bieu", // Timetable
   };
 
   // Try exact match first

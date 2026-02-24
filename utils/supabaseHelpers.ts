@@ -338,8 +338,14 @@ export const supabaseGetAll = async <T = any>(tablePath: string): Promise<Record
 
   if (error) {
     // If table doesn't exist, return null instead of logging error (table might not be created yet)
-    if (error.code === "PGRST205") {
-      console.warn(`⚠️ Table ${tableName} does not exist yet. Skipping...`);
+    // PGRST205 = table not found, 404 = not found (HTTP status)
+    if (error.code === "PGRST205" || error.message?.includes("404") || error.message?.includes("not found")) {
+      // Silently skip optional tables (like thoi_khoa_bieu, khoa_hoc) that may not exist yet
+      // Only log for development mode if needed
+      const optionalTables = ["thoi_khoa_bieu", "khoa_hoc"];
+      if (process.env.NODE_ENV === "development" && !optionalTables.some(t => tableName.includes(t))) {
+        console.warn(`⚠️ Table ${tableName} does not exist yet. Skipping...`);
+      }
       return null;
     }
     console.error(`Error fetching from ${tableName}:`, error);
@@ -719,6 +725,7 @@ export const supabaseRemove = async (tablePath: string, id: string): Promise<boo
 
 /**
  * Subscribe to changes (replaces Firebase onValue)
+ * Like Firebase onValue: fires immediately with current data, then on every change
  */
 export const supabaseOnValue = (
   tablePath: string,
@@ -727,6 +734,21 @@ export const supabaseOnValue = (
   const client = getClient(false);
   const tableName = getTableName(tablePath);
 
+  // Initial fetch - giống Firebase onValue, gọi callback ngay với data hiện tại
+  supabaseGetAll(tablePath).then((data) => {
+    if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+      console.log(`📡 Initial load from ${tableName}: ${Object.keys(data).length} records`);
+      callback(data);
+    } else {
+      console.log(`📡 Initial load from ${tableName}: no data`);
+      callback({});
+    }
+  }).catch((error) => {
+    console.error(`📡 Error initial loading from ${tableName}:`, error);
+    callback({});
+  });
+
+  // Then subscribe to real-time changes
   const channel = client
     .channel(`${tableName}_changes`)
     .on(
@@ -737,21 +759,17 @@ export const supabaseOnValue = (
         table: tableName,
       },
       (payload) => {
-        console.log(`📡 Real-time update from ${tableName}:`, payload);
-        console.log(`📡 Event type: ${payload.eventType}, Table: ${payload.table}`);
+        console.log(`📡 Real-time update from ${tableName}:`, payload.eventType);
         // Fetch all data when change occurs
         supabaseGetAll(tablePath).then((data) => {
           if (data && typeof data === 'object' && Object.keys(data).length > 0) {
             console.log(`📡 Fetched ${Object.keys(data).length} records after real-time update`);
             callback(data);
           } else {
-            console.log(`📡 No data fetched after real-time update, clearing state`);
-            // Call callback with empty object to clear state
             callback({});
           }
         }).catch((error) => {
           console.error(`📡 Error fetching data after real-time update:`, error);
-          // Call callback with empty object on error to clear state
           callback({});
         });
       }

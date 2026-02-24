@@ -188,12 +188,13 @@ const AttendanceSessionPage = () => {
     currentAttendanceRecords: AttendanceRecord[]
   ) => {
     try {
-      const [studentsData, classesData, coursesData, invoicesData] = await Promise.all([
+      const [studentsData, classesData, invoicesData] = await Promise.all([
         supabaseGetAll("datasheet/Học_sinh"),
         supabaseGetAll("datasheet/Lớp_học"),
-        supabaseGetAll("datasheet/Khóa_học"),
         supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết"),
       ]);
+      // Bảng khoa_hoc chưa tồn tại trong Supabase - bỏ qua để tránh lỗi 404
+      const coursesData = null;
 
       const studentsList = studentsData && typeof studentsData === 'object'
         ? Object.entries(studentsData).map(([id, value]: [string, any]) => {
