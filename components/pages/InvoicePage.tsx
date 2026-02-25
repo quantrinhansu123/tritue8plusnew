@@ -1128,8 +1128,10 @@ const InvoicePage = () => {
           return invStudentId === invoice.studentId && invMonth === dbMonth && invYear === invoice.year;
         });
         
-        if (matchingInvoice && matchingInvoice.status) {
+        if (matchingInvoice && typeof matchingInvoice === "object" && matchingInvoice.status) {
           statusFromDB = matchingInvoice.status;
+        } else if (matchingInvoice === "paid" || matchingInvoice === "unpaid") {
+          statusFromDB = matchingInvoice;
         }
         
         groupMap.set(key, {
@@ -5528,8 +5530,7 @@ const InvoicePage = () => {
               jsPDF: { 
                 unit: 'mm', 
                 format: 'a5', 
-                orientation: 'portrait',
-                compress: true
+                orientation: 'portrait'
               }
             })
             .from(tempDiv)
@@ -6182,13 +6183,13 @@ const InvoicePage = () => {
           // Ưu tiên 1: Tìm trong studentInvoiceStatus (đã được load từ Phiếu_thu_học_phí)
           // studentInvoiceStatus lưu theo id, nhưng mỗi invoice có groupKey
           // Tìm invoice có cùng groupKey
-          const matchingInvoice = Object.values(studentInvoiceStatus).find((inv: any) => {
+          const matchingInvoice = Object.values(studentInvoiceStatus).find((inv) => {
             if (!inv || typeof inv !== "object") return false;
             const invGroupKey = `${inv.studentId}-${inv.month}-${inv.year}`;
             return invGroupKey === invoiceKey;
           });
           
-          if (matchingInvoice && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
+          if (matchingInvoice && typeof matchingInvoice === "object" && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
             debt = matchingInvoice.debt;
           }
           
@@ -6255,20 +6256,18 @@ const InvoicePage = () => {
           
           // Tính "Nợ học phí" = ưu tiên lấy từ cột debt trong database (phieu_thu_hoc_phi)
           // Cùng logic với modal chỉnh sửa phiếu thu học phí
-          const invoiceKey = `${record.studentId}-${dbMonth}-${record.year}`;
+          const invoiceKey2 = `${record.studentId}-${dbMonth}-${record.year}`;
           let debt: number | null = null;
           
           // Ưu tiên 1: Tìm trong studentInvoiceStatus (đã được load từ Phiếu_thu_học_phí)
-          // studentInvoiceStatus lưu theo id, nhưng mỗi invoice có groupKey
-          // Tìm invoice có cùng groupKey
-          const matchingInvoice = Object.values(studentInvoiceStatus).find((inv: any) => {
+          const matchingInvoice2 = Object.values(studentInvoiceStatus).find((inv) => {
             if (!inv || typeof inv !== "object") return false;
             const invGroupKey = `${inv.studentId}-${inv.month}-${inv.year}`;
-            return invGroupKey === invoiceKey;
+            return invGroupKey === invoiceKey2;
           });
           
-          if (matchingInvoice && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
-            debt = matchingInvoice.debt;
+          if (matchingInvoice2 && typeof matchingInvoice2 === "object" && matchingInvoice2.debt !== undefined && matchingInvoice2.debt !== null) {
+            debt = matchingInvoice2.debt;
           }
           
           // Nếu không có debt trong database, tính toán từ các tháng trước
@@ -6333,8 +6332,10 @@ const InvoicePage = () => {
             return invStudentId === record.studentId && invMonth === dbMonth && invYear === record.year;
           });
           
-          if (matchingInvoice && matchingInvoice.status) {
+          if (matchingInvoice && typeof matchingInvoice === "object" && matchingInvoice.status) {
             statusFromDB = matchingInvoice.status;
+          } else if (matchingInvoice === "paid" || matchingInvoice === "unpaid") {
+            statusFromDB = matchingInvoice;
           }
           
           const status = (statusFromDB || "").toLowerCase();
@@ -6529,13 +6530,13 @@ const InvoicePage = () => {
                     // Ưu tiên 1: Tìm trong studentInvoiceStatus (đã được load từ Phiếu_thu_học_phí)
                     // studentInvoiceStatus lưu theo id, nhưng mỗi invoice có groupKey
                     // Tìm invoice có cùng groupKey
-                    const matchingInvoice = Object.values(studentInvoiceStatus).find((inv: any) => {
+                    const matchingInvoice = Object.values(studentInvoiceStatus).find((inv) => {
                       if (!inv || typeof inv !== "object") return false;
                       const invGroupKey = `${inv.studentId}-${inv.month}-${inv.year}`;
                       return invGroupKey === invoiceKey;
                     });
                     
-                    if (matchingInvoice && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
+                    if (matchingInvoice && typeof matchingInvoice === "object" && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
                       savedDebt = matchingInvoice.debt;
                       console.log(`✅ Lấy debt từ studentInvoiceStatus (groupKey: ${invoiceKey}): ${savedDebt}`);
                     } else {
@@ -6806,16 +6807,14 @@ const InvoicePage = () => {
           let debt: number | null = null;
           
           // Ưu tiên 1: Tìm trong studentInvoiceStatus (đã được load từ Phiếu_thu_học_phí)
-          // studentInvoiceStatus lưu theo id, nhưng mỗi invoice có groupKey
-          // Tìm invoice có cùng groupKey
-          const matchingInvoice = Object.values(studentInvoiceStatus).find((inv: any) => {
+          const matchingInvoiceForDebt = Object.values(studentInvoiceStatus).find((inv) => {
             if (!inv || typeof inv !== "object") return false;
             const invGroupKey = `${inv.studentId}-${inv.month}-${inv.year}`;
             return invGroupKey === invoiceKey;
           });
           
-          if (matchingInvoice && matchingInvoice.debt !== undefined && matchingInvoice.debt !== null) {
-            debt = matchingInvoice.debt;
+          if (matchingInvoiceForDebt && typeof matchingInvoiceForDebt === "object" && matchingInvoiceForDebt.debt !== undefined && matchingInvoiceForDebt.debt !== null) {
+            debt = matchingInvoiceForDebt.debt;
           }
           
           // Nếu không có debt trong database, tính toán từ các tháng trước
