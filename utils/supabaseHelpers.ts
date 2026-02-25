@@ -464,13 +464,16 @@ export const supabaseSet = async (
     }
   });
   
-  // QUAN TRỌNG: Bảng phieu_thu_hoc_phi KHÔNG có cột subjects
-  // Xóa field subjects nếu có (danh sách môn học chi tiết đã được lưu trong phieu_thu_hoc_phi_chi_tiet)
+  // QUAN TRỌNG: Bảng phieu_thu_hoc_phi KHÔNG có các cột: subjects, class_id, class_name, class_code, classCode, subject, price_per_session, session_prices, sessions, total_sessions
+  // Xóa các field này nếu có (danh sách môn học chi tiết đã được lưu trong phieu_thu_hoc_phi_chi_tiet)
   if (tableName === "phieu_thu_hoc_phi" || tableName === "Phieu_thu_hoc_phi") {
-    if (cleanedData.subjects !== undefined) {
-      delete cleanedData.subjects;
-      console.log(`🗑️ Đã xóa field 'subjects' khỏi cleanedData vì bảng ${tableName} không có cột này`);
-    }
+    const fieldsToRemove = ['subjects', 'class_id', 'class_name', 'class_code', 'classCode', 'subject', 'price_per_session', 'session_prices', 'sessions', 'total_sessions'];
+    fieldsToRemove.forEach(field => {
+      if (cleanedData[field] !== undefined) {
+        delete cleanedData[field];
+        console.log(`🗑️ Đã xóa field '${field}' khỏi cleanedData vì bảng ${tableName} không có cột này`);
+      }
+    });
   }
   
   // If data has id, use upsert; otherwise insert
@@ -490,16 +493,15 @@ export const supabaseSet = async (
       onConflict = "id";
     }
   } else if (tableName === "phieu_thu_hoc_phi") {
-    // Bảng tổng hợp có thể có constraint unique trên (student_id, month, year)
-    // Nhưng nếu constraint chưa tồn tại, fallback về id
-    // Ưu tiên sử dụng student_id,month,year nếu có đủ các trường
+    // Bảng phieu_thu_hoc_phi có constraint unique trên (student_id, month, year)
+    // Nếu có đủ các trường này, sử dụng constraint unique để upsert
     if (cleanedData.student_id && cleanedData.month !== undefined && cleanedData.year !== undefined) {
-      // Thử sử dụng student_id,month,year (có thể sẽ lỗi nếu constraint chưa tồn tại)
       onConflict = "student_id,month,year";
     } else if (cleanedData.id) {
+      // Fallback: sử dụng id nếu không có đủ student_id, month, year
       onConflict = "id";
     } else {
-      // Nếu không có id và không đủ các trường, vẫn dùng id (sẽ tạo mới)
+      // Nếu không có id, vẫn dùng id (sẽ tạo mới với ID tự động)
       onConflict = "id";
     }
   }
@@ -623,11 +625,17 @@ export const supabaseUpdate = async (
   updates: any
 ): Promise<boolean> => {
   const client = getClient(true); // Use admin for write operations
+  if (!client) {
+    console.error("❌ Cannot get Supabase client. Check initialization.");
+    return false;
+  }
+  
   const tableName = getTableName(tablePath);
   
   // Convert updates format for Supabase (skip defaults for update operations)
   const convertedUpdates = convertToSupabaseFormat(updates, tableName, true);
   console.log(`🔄 Updating in Supabase table: ${tableName}`, { id, updatesKeys: Object.keys(convertedUpdates) });
+  console.log(`🔄 Full converted updates:`, JSON.stringify(convertedUpdates, null, 2));
   
   // First, check if the record exists
   const { data: existingData, error: checkError } = await client
@@ -638,41 +646,17 @@ export const supabaseUpdate = async (
 
   if (checkError && checkError.code !== "PGRST116") { // PGRST116 = no rows returned
     console.error(`❌ Error checking if record exists in ${tableName}:`, checkError);
+    console.error(`   Error code: ${checkError.code}`);
+    console.error(`   Error message: ${checkError.message}`);
+    console.error(`   Error details: ${checkError.details}`);
     return false;
   }
 
-  // If record doesn't exist, use upsert instead
+  // If record doesn't exist, return false (don't upsert with partial data)
   if (!existingData || checkError?.code === "PGRST116") {
-    console.warn(`⚠️ Record with id ${id} doesn't exist in ${tableName}. Using upsert instead...`);
-    
-    // Prepare data for upsert (include id and all updates)
-    const upsertData = {
-      id,
-      ...convertedUpdates,
-    };
-    
-    const { data: upsertedData, error: upsertError } = await client
-      .from(tableName)
-      .upsert(upsertData, { onConflict: "id" })
-      .select();
-
-    if (upsertError) {
-      console.error(`❌ Error upserting to ${tableName}:`, upsertError);
-      console.error(`   Error code: ${upsertError.code}`);
-      console.error(`   Error message: ${upsertError.message}`);
-      console.error(`   Error details: ${upsertError.details}`);
-      console.error(`   Error hint: ${upsertError.hint}`);
-      console.error("Data that failed:", JSON.stringify(upsertData, null, 2));
-      return false;
-    }
-
-    if (!upsertedData || upsertedData.length === 0) {
-      console.warn(`⚠️ Upsert succeeded but no rows were returned in ${tableName} for id: ${id}`);
-      return false;
-    }
-
-    console.log(`✅ Successfully upserted ${upsertedData.length} row(s) in ${tableName}`, { id, updatedFields: Object.keys(convertedUpdates) });
-    return true;
+    console.warn(`⚠️ Record with id ${id} doesn't exist in ${tableName}. Cannot update non-existent record.`);
+    console.warn(`⚠️ For update operations, the record must already exist in the database.`);
+    return false;
   }
   
   // Record exists, proceed with update
@@ -794,7 +778,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       studentCode: "student_code",
       classId: "class_id",
       className: "class_name",
-      classCode: "class_code",
+      // classCode: "class_code", // Bỏ cột này - không điền vào database nữa
       totalSessions: "total_sessions",
       totalAmount: "total_amount",
       finalAmount: "final_amount",
@@ -813,25 +797,25 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       }
     });
     
+    // Xóa classCode và class_code khỏi data trước khi lưu (không điền vào database nữa)
+    if (converted.class_code !== undefined) delete converted.class_code;
+    if (converted.classCode !== undefined) delete converted.classCode;
+    
     // Only add default values if skipDefaults is false (for insert/upsert operations)
     // For update operations, skipDefaults should be true to avoid setting fields to null
+    // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có các cột: class_id, class_name, class_code, price_per_session, subject
+    // Chỉ xử lý các cột có trong bảng
     if (!skipDefaults) {
-      // Ensure required fields have default values if missing
-      if (converted.class_id === undefined) converted.class_id = null;
-      if (converted.class_name === undefined) converted.class_name = null;
-      if (converted.class_code === undefined) converted.class_code = null;
-      if (converted.price_per_session === undefined) converted.price_per_session = 0;
-      if (converted.subject === undefined) converted.subject = null;
+      // Ensure required fields have default values if missing (chỉ các cột có trong bảng)
       if (converted.debt === undefined) converted.debt = 0;
     }
     
-    // Ensure numeric fields are numbers, not strings
-    if (typeof converted.total_sessions === "string") converted.total_sessions = parseInt(converted.total_sessions) || 0;
+    // Ensure numeric fields are numbers, not strings (chỉ các cột có trong bảng)
+    // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có cột total_sessions
     if (typeof converted.total_amount === "string") converted.total_amount = parseFloat(converted.total_amount) || 0;
     if (typeof converted.final_amount === "string") converted.final_amount = parseFloat(converted.final_amount) || 0;
     if (typeof converted.discount === "string") converted.discount = parseFloat(converted.discount) || 0;
     if (typeof converted.debt === "string") converted.debt = parseFloat(converted.debt) || 0;
-    if (typeof converted.price_per_session === "string") converted.price_per_session = parseFloat(converted.price_per_session) || 0;
     // QUAN TRỌNG: Month đã là 1-12 từ filter UI, KHÔNG cộng thêm 1
     // Không convert từ 0-11 → 1-12 vì month đã là 1-12 từ filter
     if (converted.month !== undefined && converted.month !== null) {
@@ -850,29 +834,13 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     
     if (typeof converted.year === "string") converted.year = parseInt(converted.year) || 0;
     
-    // Only set default values for sessions and session_prices if skipDefaults is false
-    if (!skipDefaults) {
-      // Ensure sessions is properly formatted as JSONB
-      if (converted.sessions && Array.isArray(converted.sessions)) {
-        // Keep as array, Supabase will handle JSONB conversion
-        converted.sessions = converted.sessions;
-      } else if (!converted.sessions) {
-        converted.sessions = [];
-      }
-      
-      // Ensure session_prices is properly formatted
-      if (converted.session_prices && typeof converted.session_prices === "object") {
-        // Keep as object, Supabase will handle JSONB conversion
-        converted.session_prices = converted.session_prices;
-      } else if (!converted.session_prices) {
-        converted.session_prices = {};
-      }
-    }
+    // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có cột sessions và session_prices
+    // Không xử lý các cột này
     
-    // QUAN TRỌNG: Bảng phieu_thu_hoc_phi KHÔNG có cột subjects
-    // Xóa field subjects nếu có (danh sách môn học chi tiết đã được lưu trong phieu_thu_hoc_phi_chi_tiet)
-    if (converted.subjects !== undefined) {
-      delete converted.subjects;
+    // Đảm bảo field "status" được giữ nguyên (không bị xóa)
+    // Status không cần convert vì tên field giống nhau trong cả camelCase và snake_case
+    if (converted.status === undefined && data.status !== undefined) {
+      converted.status = data.status;
     }
   }
 
@@ -884,10 +852,10 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       studentCode: "student_code",
       classId: "class_id",
       className: "class_name",
-      classCode: "class_code",
+      // classCode: "class_code", // Bỏ cột này - không điền vào database nữa
       totalSessions: "total_sessions",
       totalAmount: "total_amount",
-      finalAmount: "final_amount",
+      // finalAmount: "final_amount", // Bỏ cột này vì không tồn tại trong phieu_thu_hoc_phi_chi_tiet
       pricePerSession: "price_per_session",
       paidAt: "paid_at",
       invoiceImage: "invoice_image",
@@ -901,11 +869,15 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       }
     });
     
+    // Xóa class_code và classCode khỏi data trước khi lưu (không điền vào database nữa)
+    if (converted.class_code !== undefined) delete converted.class_code;
+    if (converted.classCode !== undefined) delete converted.classCode;
+    
     // Only add default values if skipDefaults is false
     if (!skipDefaults) {
       if (converted.class_id === undefined) converted.class_id = null;
       if (converted.class_name === undefined) converted.class_name = null;
-      if (converted.class_code === undefined) converted.class_code = null;
+      // if (converted.class_code === undefined) converted.class_code = null; // Bỏ cột này - không điền vào database nữa
       if (converted.subject === undefined) converted.subject = null;
       if (converted.price_per_session === undefined) converted.price_per_session = 0;
       if (converted.debt === undefined) converted.debt = 0;
@@ -915,10 +887,14 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     // Ensure numeric fields are numbers, not strings
     if (typeof converted.total_sessions === "string") converted.total_sessions = parseInt(converted.total_sessions) || 0;
     if (typeof converted.total_amount === "string") converted.total_amount = parseFloat(converted.total_amount) || 0;
-    if (typeof converted.final_amount === "string") converted.final_amount = parseFloat(converted.final_amount) || 0;
+    // if (typeof converted.final_amount === "string") converted.final_amount = parseFloat(converted.final_amount) || 0; // Bỏ cột này
     if (typeof converted.discount === "string") converted.discount = parseFloat(converted.discount) || 0;
     if (typeof converted.debt === "string") converted.debt = parseFloat(converted.debt) || 0;
     if (typeof converted.price_per_session === "string") converted.price_per_session = parseFloat(converted.price_per_session) || 0;
+    
+    // Xóa final_amount vì không tồn tại trong phieu_thu_hoc_phi_chi_tiet
+    if (converted.final_amount !== undefined) delete converted.final_amount;
+    if (converted.finalAmount !== undefined) delete converted.finalAmount;
     
     // QUAN TRỌNG: Month đã là 1-12 từ filter UI, KHÔNG cộng thêm 1
     // Không convert từ 0-11 → 1-12 vì month đã là 1-12 từ filter

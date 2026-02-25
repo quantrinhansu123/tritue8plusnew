@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import domtoimage from "dom-to-image-more";
 import {
   Button,
@@ -82,17 +82,51 @@ interface SalaryData {
   [key: string]: any;
 }
 
+// Remove Vietnamese diacritics and special characters (bỏ dấu tiếng Việt và ký tự đặc biệt)
+const removeVietnameseDiacritics = (str: string): string => {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .replace(/[^a-zA-Z0-9\s]/g, "") // Remove all special characters, keep only letters, numbers, and spaces
+    .replace(/\s+/g, " ") // Replace multiple spaces with single space
+    .trim();
+};
+
 // Generate VietQR URL with hardcoded bank info
 const generateVietQR = (
   amount: string,
   studentName: string,
-  month: string
+  month: string,
+  className?: string,
+  hasDebt?: boolean
 ): string => {
   const bankId = "VPB"; // VPBank
   const accountNo = "4319888";
   const accountName = "NGUYEN THI HOA";
   const numericAmount = amount.replace(/[^0-9]/g, "");
-  const description = `HP T${month} ${studentName}`;
+  
+  // Build description with class name
+  let description = `HP T${month} ${studentName}`;
+  if (className && className.trim()) {
+    description += ` ${className.trim()}`;
+  }
+  
+  // Add debt note if has debt
+  if (hasDebt) {
+    description += " Da bao gom no hoc phi";
+  }
+  
+  // Remove Vietnamese diacritics for QR code
+  description = removeVietnameseDiacritics(description);
+  
+  // Explicitly remove parentheses and any remaining special characters
+  description = description.replace(/[()]/g, "").trim();
+  
+  // Debug log
+  console.log("🔍 generateVietQR (Receipts) description:", description);
+  
   return `https://img.vietqr.io/image/${bankId}-${accountNo}-compact.png?amount=${numericAmount}&addInfo=${encodeURIComponent(
     description
   )}&accountName=${encodeURIComponent(accountName)}`;
@@ -376,7 +410,8 @@ export const TuitionReceipt: React.FC<{
               <tbody>
                 {subjects.map((item, index) => {
                   const priceNum = parseInt(item.pricePerSession.replace(/[^0-9]/g, "") || "0");
-                  const totalNum = parseInt(item.total.replace(/[^0-9]/g, "") || "0");
+                  // QUAN TRỌNG: Thành tiền = Buổi x Đơn giá (không lấy từ item.total)
+                  const totalNum = item.sessions * priceNum;
                   return (
                     <tr
                       key={index}
@@ -550,7 +585,13 @@ export const TuitionReceipt: React.FC<{
                   <span>VIETQR</span> <span>VIETQR</span>
                 </div>
                 <img
-                  src={generateVietQR(data.totalAmount, data.studentName, data.month)}
+                  src={generateVietQR(
+                    data.totalAmount, 
+                    data.studentName, 
+                    data.month,
+                    data.studentClass,
+                    !!(data.debtDetail1 || data.debtDetail2)
+                  )}
                   alt="QR Code"
                   style={{ width: "100%", height: "auto", display: "block" }}
                   crossOrigin="anonymous"
@@ -561,7 +602,7 @@ export const TuitionReceipt: React.FC<{
               </div>
 
               <div style={{ fontSize: "11px", color: "#666", textAlign: "center", lineHeight: "1.4", maxWidth: "500px" }}>
-                Ghi chú: Vui lòng ghi rõ nội dung chuyển khoản: {data.studentName} - T{data.month}
+                Ghi chú: Vui lòng ghi rõ nội dung chuyển khoản: {removeVietnameseDiacritics(data.studentName)}{data.studentClass ? ` - ${removeVietnameseDiacritics(data.studentClass)}` : ""} - T{data.month}{data.debtDetail1 || data.debtDetail2 ? " (Da bao gom no hoc phi)" : ""}
               </div>
             </div>
           </div>
@@ -967,11 +1008,23 @@ const Receipts: React.FC = () => {
     const price =
       Number(tuitionData.pricePerSession.replace(/[^0-9]/g, "")) || 0;
     const total = sessions * price;
-    setTuitionData({
-      ...tuitionData,
+    setTuitionData((prev) => ({
+      ...prev,
       totalAmount: total.toLocaleString("vi-VN"),
-    });
+    }));
   };
+
+  // Auto-calculate total when sessions or price changes
+  useEffect(() => {
+    const sessions = Number(tuitionData.totalSessions) || 0;
+    const price =
+      Number(tuitionData.pricePerSession.replace(/[^0-9]/g, "")) || 0;
+    const total = sessions * price;
+    setTuitionData((prev) => ({
+      ...prev,
+      totalAmount: total.toLocaleString("vi-VN"),
+    }));
+  }, [tuitionData.totalSessions, tuitionData.pricePerSession]);
 
   // Calculate total salary
   const calculateSalaryTotal = () => {
@@ -1068,10 +1121,9 @@ const Receipts: React.FC = () => {
                         onChange={(e) =>
                           setTuitionData({
                             ...tuitionData,
-                            totalSessions: Number(e.target.value),
+                            totalSessions: Number(e.target.value) || 0,
                           })
                         }
-                        onBlur={calculateTuitionTotal}
                         placeholder="VD: 9"
                       />
                     </div>
@@ -1093,7 +1145,6 @@ const Receipts: React.FC = () => {
                             pricePerSession: e.target.value,
                           })
                         }
-                        onBlur={calculateTuitionTotal}
                         placeholder="VD: 150,000"
                       />
                     </div>
