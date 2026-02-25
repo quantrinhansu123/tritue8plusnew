@@ -18,6 +18,9 @@ export default defineConfig(({ mode }) => ({
     esbuild: {
       drop: mode === 'production' ? ['console', 'debugger'] : [],
     },
+    build: {
+      chunkSizeWarningLimit: 1000, // Increase chunk size warning limit to 1000kb
+    },
     server: {
         host: '0.0.0.0',
         port: 5173,
