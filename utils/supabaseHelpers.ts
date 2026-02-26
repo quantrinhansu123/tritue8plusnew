@@ -5,6 +5,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * Helper functions to replace Firebase Realtime Database operations with Supabase
  */
 
+// Track tables that don't exist to avoid repeated 404s
+const missingTables = new Set<string>();
+
 // Get Supabase client (prefer admin for write operations, regular for read)
 const getClient = (useAdmin: boolean = false): SupabaseClient | null => {
   const client = useAdmin ? supabaseAdmin : supabase;
@@ -334,12 +337,17 @@ export const supabaseGetAll = async <T = any>(tablePath: string): Promise<Record
   const client = getClient(false);
   const tableName = getTableName(tablePath);
 
+  if (missingTables.has(tableName)) {
+    return null;
+  }
+
   const { data, error } = await client.from(tableName).select("*");
 
   if (error) {
     // If table doesn't exist, return null instead of logging error (table might not be created yet)
     // PGRST205 = table not found, 404 = not found (HTTP status)
     if (error.code === "PGRST205" || error.message?.includes("404") || error.message?.includes("not found")) {
+      missingTables.add(tableName);
       // Silently skip optional tables (like thoi_khoa_bieu, khoa_hoc) that may not exist yet
       // Only log for development mode if needed
       const optionalTables = ["thoi_khoa_bieu", "khoa_hoc"];
@@ -633,7 +641,8 @@ export const supabaseUpdate = async (
   const tableName = getTableName(tablePath);
   
   // Convert updates format for Supabase (skip defaults for update operations)
-  const convertedUpdates = convertToSupabaseFormat(updates, tableName, true);
+  let convertedUpdates = convertToSupabaseFormat(updates, tableName, true);
+
   console.log(`🔄 Updating in Supabase table: ${tableName}`, { id, updatesKeys: Object.keys(convertedUpdates) });
   console.log(`🔄 Full converted updates:`, JSON.stringify(convertedUpdates, null, 2));
   
@@ -642,9 +651,9 @@ export const supabaseUpdate = async (
     .from(tableName)
     .select("id")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
-  if (checkError && checkError.code !== "PGRST116") { // PGRST116 = no rows returned
+  if (checkError) {
     console.error(`❌ Error checking if record exists in ${tableName}:`, checkError);
     console.error(`   Error code: ${checkError.code}`);
     console.error(`   Error message: ${checkError.message}`);
@@ -653,7 +662,7 @@ export const supabaseUpdate = async (
   }
 
   // If record doesn't exist, return false (don't upsert with partial data)
-  if (!existingData || checkError?.code === "PGRST116") {
+  if (!existingData) {
     console.warn(`⚠️ Record with id ${id} doesn't exist in ${tableName}. Cannot update non-existent record.`);
     console.warn(`⚠️ For update operations, the record must already exist in the database.`);
     return false;
@@ -673,6 +682,7 @@ export const supabaseUpdate = async (
     console.error(`   Error details: ${error.details}`);
     console.error(`   Error hint: ${error.hint}`);
     console.error("Updates that failed:", JSON.stringify(convertedUpdates, null, 2));
+
     return false;
   }
 
@@ -718,6 +728,11 @@ export const supabaseOnValue = (
   const client = getClient(false);
   const tableName = getTableName(tablePath);
 
+  if (missingTables.has(tableName)) {
+    callback({});
+    return () => {};
+  }
+
   // Initial fetch - giống Firebase onValue, gọi callback ngay với data hiện tại
   supabaseGetAll(tablePath).then((data) => {
     if (data && typeof data === 'object' && Object.keys(data).length > 0) {
@@ -726,11 +741,18 @@ export const supabaseOnValue = (
     } else {
       console.log(`📡 Initial load from ${tableName}: no data`);
       callback({});
+      if (missingTables.has(tableName)) {
+        return;
+      }
     }
   }).catch((error) => {
     console.error(`📡 Error initial loading from ${tableName}:`, error);
     callback({});
   });
+
+  if (missingTables.has(tableName)) {
+    return () => {};
+  }
 
   // Then subscribe to real-time changes
   const channel = client
