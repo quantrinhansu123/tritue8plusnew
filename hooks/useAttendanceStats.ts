@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue } from 'firebase/database';
-import { database } from '../firebase';
 import { AttendanceSession } from '../types';
 import dayjs from 'dayjs';
+import { supabaseOnValue, convertFromSupabaseFormat } from '../utils/supabaseHelpers';
 
 interface StudentStats {
     totalSessions: number; // Tổng số buổi học
@@ -22,14 +21,15 @@ export const useAttendanceStats = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const sessionsRef = ref(database, 'datasheet/Điểm_danh_sessions');
-        const unsubscribe = onValue(sessionsRef, (snapshot) => {
-            const data = snapshot.val();
+        const unsubscribe = supabaseOnValue('datasheet/Điểm_danh_sessions', (data) => {
             if (data) {
-                const sessionsList = Object.entries(data).map(([id, value]) => ({
-                    id,
-                    ...(value as Omit<AttendanceSession, 'id'>)
-                }));
+                const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+                    const converted = convertFromSupabaseFormat(value, 'diem_danh_sessions');
+                    return {
+                        id,
+                        ...converted
+                    } as AttendanceSession;
+                });
                 setSessions(sessionsList);
             } else {
                 setSessions([]);

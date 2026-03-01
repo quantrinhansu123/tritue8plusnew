@@ -13,10 +13,18 @@ import {
   Input,
 } from "antd";
 import { PlusOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
-import { ref, onValue, push, update, remove, set } from "firebase/database";
-import { database } from "../../firebase";
 import { subjectOptions, gradeOptions } from "../../utils/selectOptions";
 import WrapperContent from "@/components/WrapperContent";
+import { ref, onValue, get, set, update, remove, push } from "firebase/database";
+import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+  supabaseSet,
+  supabaseUpdate,
+  supabaseRemove,
+  generateFirebaseId,
+} from "@/utils/supabaseHelpers";
 
 interface Course {
   id: string;
@@ -54,22 +62,22 @@ const CourseManagement = () => {
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [form] = Form.useForm();
 
-  // Fetch courses from Firebase
+  // Fetch courses from Supabase
   useEffect(() => {
     setLoading(true);
-    const coursesRef = ref(database, "datasheet/Khóa_học");
-
-    const unsubscribe = onValue(
-      coursesRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        console.log("🔥 Firebase courses data updated:", data);
-        if (data) {
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Khóa_học",
+      (data) => {
+        console.log("🔥 Supabase courses data updated:", data);
+        if (data && typeof data === "object") {
           const coursesList = Object.entries(data).map(
-            ([key, value]: [string, any]) => ({
-              id: key,
-              ...value,
-            })
+            ([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "khoa_hoc");
+              return {
+                id: key,
+                ...converted,
+              };
+            }
           );
           console.log("📚 Courses list:", coursesList);
           setCourses(coursesList);
@@ -77,50 +85,53 @@ const CourseManagement = () => {
           setCourses([]);
         }
         setLoading(false);
-      },
-      (error) => {
-        console.error("Error fetching courses:", error);
-        message.error("Lỗi khi tải danh sách khóa học");
-        setLoading(false);
       }
     );
 
     return () => unsubscribe();
   }, []);
 
-  // Fetch teachers from Firebase
+  // Fetch teachers from Supabase
   useEffect(() => {
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const teacherList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Teacher, "id">),
-        }));
-        setTeachers(teacherList);
-      } else {
-        setTeachers([]);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Giáo_viên",
+      (data) => {
+        if (data && typeof data === "object") {
+          const teacherList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "giao_vien");
+            return {
+              id,
+              ...(converted as Omit<Teacher, "id">),
+            };
+          });
+          setTeachers(teacherList);
+        } else {
+          setTeachers([]);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
-  // Fetch students from Firebase
+  // Fetch students from Supabase
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Học_sinh");
-    const unsubscribe = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const studentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
-        setStudents(studentList);
-      } else {
-        setStudents([]);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Học_sinh",
+      (data) => {
+        if (data && typeof data === "object") {
+          const studentList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return {
+              id,
+              ...(converted as Omit<Student, "id">),
+            };
+          });
+          setStudents(studentList);
+        } else {
+          setStudents([]);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
@@ -155,8 +166,7 @@ const CourseManagement = () => {
 
   const handleDelete = async (courseId: string) => {
     try {
-      const courseRef = ref(database, `datasheet/Khóa_học/${courseId}`);
-      await remove(courseRef);
+      await supabaseRemove("datasheet/Khóa_học", courseId);
       message.success("Xóa khóa học thành công");
     } catch (error) {
       console.error("Error deleting course:", error);
@@ -212,8 +222,6 @@ const CourseManagement = () => {
         message.success("Cập nhật khóa học thành công");
       } else {
         // Add new course
-        const coursesRef = ref(database, "datasheet/Khóa_học");
-        const newCourseRef = push(coursesRef);
         const courseData = {
           Khối: values["Khối"],
           "Môn học": values["Môn học"],
@@ -226,8 +234,9 @@ const CourseManagement = () => {
           "Ngày tạo": timestamp,
         };
         console.log("➕ Adding new course:", courseData);
-        await set(newCourseRef, courseData);
-        console.log("✅ Course added with ID:", newCourseRef.key);
+        const newCourseId = generateFirebaseId();
+        await supabaseSet("datasheet/Khóa_học", { ...courseData, id: newCourseId });
+        console.log("✅ Course added with ID:", newCourseId);
         message.success("Thêm khóa học thành công");
       }
 

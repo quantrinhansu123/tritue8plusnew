@@ -188,10 +188,11 @@ const AttendanceSessionPage = () => {
     currentAttendanceRecords: AttendanceRecord[]
   ) => {
     try {
-      const [studentsData, classesData, invoicesData] = await Promise.all([
+      const [studentsData, classesData, invoicesData, tuitionData] = await Promise.all([
         supabaseGetAll("datasheet/Học_sinh"),
         supabaseGetAll("datasheet/Lớp_học"),
         supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết"),
+        supabaseGetAll("datasheet/Lớp_học/Học_sinh"), // Load hoc_phi_rieng
       ]);
       // Bảng khoa_hoc chưa tồn tại trong Supabase - bỏ qua để tránh lỗi 404
       const coursesData = null;
@@ -216,6 +217,24 @@ const AttendanceSessionPage = () => {
       const studentsMap = Object.fromEntries(studentsList.map((s) => [s.id, s]));
       const classesMap = Object.fromEntries(classesList.map((c) => [c.id, c]));
 
+      // Tạo map để lookup hoc_phi_rieng: key = "student_id-class_id", value = hoc_phi_rieng
+      const hocPhiRiengMap = new Map<string, number>();
+      if (tuitionData && typeof tuitionData === "object") {
+        Object.values(tuitionData).forEach((item: any) => {
+          const studentId = item.studentId || item.student_id || "";
+          const classId = item.classId || item.class_id || "";
+          const rawHocPhiRieng = item.hocPhiRieng ?? item.hoc_phi_rieng;
+          const hocPhiRieng = rawHocPhiRieng !== null && rawHocPhiRieng !== undefined
+            ? Number(rawHocPhiRieng)
+            : null;
+
+          if (studentId && classId && hocPhiRieng !== null && !Number.isNaN(hocPhiRieng)) {
+            const key = `${studentId}-${classId}`;
+            hocPhiRiengMap.set(key, hocPhiRieng);
+          }
+        });
+      }
+
       const findCourse = (classInfo: any) => {
         if (!classInfo) return undefined;
         const classSubject = classInfo["Môn học"];
@@ -234,13 +253,26 @@ const AttendanceSessionPage = () => {
         });
       };
 
-      // Get class info and price for current class
+      // Get class info and default price for current class
       const classInfo = classesMap[currentClassId];
       const course = findCourse(classInfo);
-      const pricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
+      const defaultPricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
 
-      if (pricePerSession === 0) {
-        console.log("[InvoiceSync] Skipped - pricePerSession is 0 for class", currentClassId);
+      // Helper function to get price for a specific student and class
+      // Priority: hoc_phi_rieng > course?.Giá > classInfo?.["Học phí mỗi buổi"]
+      const getPricePerSession = (studentId: string, classId: string): number => {
+        // Priority 1: Lấy từ hoc_phi_rieng
+        const mapKey = `${studentId}-${classId}`;
+        const hocPhiRieng = hocPhiRiengMap.get(mapKey);
+        if (hocPhiRieng !== undefined && hocPhiRieng !== null && hocPhiRieng > 0) {
+          return hocPhiRieng;
+        }
+        // Priority 2: Fallback về default price
+        return defaultPricePerSession;
+      };
+
+      if (defaultPricePerSession === 0 && hocPhiRiengMap.size === 0) {
+        console.log("[InvoiceSync] Skipped - no price available for class", currentClassId);
         return;
       }
 
@@ -290,6 +322,8 @@ const AttendanceSessionPage = () => {
                   const extraSessions = Array.isArray(existingExtra.sessions) ? existingExtra.sessions : [];
                   const sessionExistsInExtra = extraSessions.some((s: any) => s["Ngày"] === sessionDate);
                   if (!sessionExistsInExtra) {
+                    // Lấy giá từ hoc_phi_rieng hoặc giữ nguyên giá cũ nếu có
+                    const currentPrice = existingExtra.pricePerSession || getPricePerSession(studentId, currentClassId);
                     const updatedInvoice = {
                       id: extraKey,
                       studentId: existingExtra.studentId || studentId,
@@ -302,10 +336,10 @@ const AttendanceSessionPage = () => {
                       month: existingExtra.month || targetMonth + 1,
                       year: existingExtra.year || targetYear,
                       totalSessions: (existingExtra.totalSessions || 0) + 1,
-                      pricePerSession: existingExtra.pricePerSession || pricePerSession,
-                      totalAmount: (existingExtra.totalAmount || 0) + pricePerSession,
+                      pricePerSession: currentPrice,
+                      totalAmount: (existingExtra.totalAmount || 0) + currentPrice,
                       discount: existingExtra.discount || 0,
-                      finalAmount: Math.max(0, (existingExtra.totalAmount || 0) + pricePerSession - (existingExtra.discount || 0)),
+                      finalAmount: Math.max(0, (existingExtra.totalAmount || 0) + currentPrice - (existingExtra.discount || 0)),
                       status: existingExtra.status || "unpaid",
                       sessions: [...extraSessions, sessionInfo],
                       isExtra: true,
@@ -324,6 +358,8 @@ const AttendanceSessionPage = () => {
                     existingInvoices
                   );
                   
+                  // Lấy giá từ hoc_phi_rieng ngay từ đầu
+                  const pricePerSessionForStudent = getPricePerSession(studentId, currentClassId);
                   const newExtraInvoice = {
                     id: extraKey,
                     studentId,
@@ -336,10 +372,10 @@ const AttendanceSessionPage = () => {
                     month: targetMonth + 1,
                     year: targetYear,
                     totalSessions: 1,
-                    pricePerSession: pricePerSession,
-                    totalAmount: pricePerSession,
+                    pricePerSession: pricePerSessionForStudent,
+                    totalAmount: pricePerSessionForStudent,
                     discount: 0,
-                    finalAmount: pricePerSession,
+                    finalAmount: pricePerSessionForStudent,
                     status: "unpaid",
                     sessions: [sessionInfo],
                     isExtra: true, // Đánh dấu là invoice bổ sung
@@ -359,6 +395,8 @@ const AttendanceSessionPage = () => {
             );
             
             if (!sessionExists) {
+              // Lấy giá từ hoc_phi_rieng hoặc giữ nguyên giá cũ nếu có
+              const currentPrice = existing.pricePerSession || getPricePerSession(studentId, currentClassId);
               // Tăng total_sessions lên 1 và cập nhật total_amount
               const updatedInvoice = {
                 id: key,
@@ -372,10 +410,10 @@ const AttendanceSessionPage = () => {
                 month: existing.month || targetMonth + 1,
                 year: existing.year || targetYear,
                 totalSessions: (existing.totalSessions || 0) + 1, // Tăng lên 1
-                pricePerSession: existing.pricePerSession || pricePerSession,
-                totalAmount: (existing.totalAmount || 0) + pricePerSession, // Cập nhật total_amount
+                pricePerSession: currentPrice,
+                totalAmount: (existing.totalAmount || 0) + currentPrice, // Cập nhật total_amount
                 discount: existing.discount || 0,
-                finalAmount: Math.max(0, (existing.totalAmount || 0) + pricePerSession - (existing.discount || 0)),
+                finalAmount: Math.max(0, (existing.totalAmount || 0) + currentPrice - (existing.discount || 0)),
                 status: existing.status || "unpaid",
                 sessions: [...existingSessions, sessionInfo], // Thêm session mới vào JSONB array
                 debt: existing.debt || 0,
@@ -392,6 +430,8 @@ const AttendanceSessionPage = () => {
               existingInvoices
             );
             
+            // Lấy giá từ hoc_phi_rieng ngay từ đầu
+            const pricePerSessionForStudent = getPricePerSession(studentId, currentClassId);
             const newInvoice = {
               id: key,
               studentId,
@@ -404,10 +444,10 @@ const AttendanceSessionPage = () => {
               month: targetMonth + 1,
               year: targetYear,
               totalSessions: 1,
-              pricePerSession: pricePerSession,
-              totalAmount: pricePerSession,
+              pricePerSession: pricePerSessionForStudent,
+              totalAmount: pricePerSessionForStudent,
               discount: 0,
-              finalAmount: pricePerSession,
+              finalAmount: pricePerSessionForStudent,
               status: "unpaid",
               sessions: [sessionInfo],
               debt: debt, // Lưu công nợ từ các tháng trước
@@ -468,8 +508,111 @@ const AttendanceSessionPage = () => {
         studentsProcessed: currentAttendanceRecords.filter(r => r["Có mặt"] === true).length,
         invoicesCreatedOrUpdated: upsertPromises.length,
       });
+      
+      // Auto-update prices from hoc_phi_rieng after syncing invoices
+      await updateInvoicePricesFromHocPhiRieng(targetMonth + 1, targetYear);
     } catch (error) {
       console.error("[InvoiceSync] Failed to sync invoices", error);
+    }
+  };
+
+  // Update invoice prices from hoc_phi_rieng for a specific month/year
+  const updateInvoicePricesFromHocPhiRieng = async (targetMonth: number, targetYear: number) => {
+    try {
+      console.log("[UpdatePrice] Starting to update prices from hoc_phi_rieng", { targetMonth, targetYear });
+      
+      // Step 1: Load hoc_phi_rieng từ bảng lop_hoc_hoc_sinh
+      const tuitionData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
+      
+      // Tạo map để lookup nhanh: key = "student_id-class_id", value = hoc_phi_rieng
+      const hocPhiRiengMap = new Map<string, number>();
+      if (tuitionData && typeof tuitionData === "object") {
+        Object.values(tuitionData).forEach((item: any) => {
+          const studentId = item.studentId || item.student_id || "";
+          const classId = item.classId || item.class_id || "";
+          const rawHocPhiRieng = item.hocPhiRieng ?? item.hoc_phi_rieng;
+          const hocPhiRieng = rawHocPhiRieng !== null && rawHocPhiRieng !== undefined
+            ? Number(rawHocPhiRieng)
+            : null;
+
+          if (studentId && classId && hocPhiRieng !== null && !Number.isNaN(hocPhiRieng)) {
+            const key = `${studentId}-${classId}`;
+            hocPhiRiengMap.set(key, hocPhiRieng);
+          }
+        });
+      }
+      
+      // Step 2: Load tất cả invoice details của tháng này
+      const allInvoiceDetails = await supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết") || {};
+      
+      const updatePromises: Promise<void>[] = [];
+      let updatedCount = 0;
+      let checkedCount = 0;
+      
+      // Step 3: Cập nhật price_per_session trong phieu_thu_hoc_phi_chi_tiet từ hoc_phi_rieng
+      Object.entries(allInvoiceDetails).forEach(([detailId, detailData]: [string, any]) => {
+        if (!detailData || typeof detailData !== "object") return;
+        
+        // Chỉ xử lý invoices của tháng/năm này
+        const invoiceMonth = detailData.month ?? 0;
+        const invoiceYear = detailData.year ?? 0;
+        
+        if (invoiceMonth !== targetMonth || invoiceYear !== targetYear) {
+          return;
+        }
+        
+        checkedCount++;
+        
+        // Lấy student_id và class_id từ detailData
+        const studentId = detailData.studentId || detailData.student_id || "";
+        const classId = detailData.classId || detailData.class_id || "";
+        
+        if (!studentId || !classId) {
+          return;
+        }
+        
+        // Tìm hoc_phi_rieng từ map
+        const mapKey = `${studentId}-${classId}`;
+        const hocPhiRieng = hocPhiRiengMap.get(mapKey);
+        
+        if (hocPhiRieng === undefined || hocPhiRieng === null) {
+          // Không có hoc_phi_rieng, giữ nguyên giá hiện tại
+          return;
+        }
+        
+        // Lấy số buổi và discount từ detailData
+        const totalSessions = detailData.totalSessions || detailData.total_sessions || 0;
+        const discount = detailData.discount || 0;
+        
+        // Tính lại totalAmount và finalAmount
+        const newTotalAmount = totalSessions * hocPhiRieng;
+        const newFinalAmount = Math.max(0, newTotalAmount - discount);
+        
+        // Chỉ cập nhật nếu giá thay đổi
+        const currentPricePerSession = detailData.pricePerSession || detailData.price_per_session || 0;
+        if (currentPricePerSession === hocPhiRieng) {
+          return; // Giá không đổi, không cần update
+        }
+        
+        // Cập nhật price_per_session trong phieu_thu_hoc_phi_chi_tiet
+        updatePromises.push(
+          supabaseUpdate("datasheet/Phiếu_thu_học_phí_chi_tiết", detailId, {
+            pricePerSession: hocPhiRieng,
+            totalAmount: newTotalAmount,
+            finalAmount: newFinalAmount,
+          }).then(() => {
+            updatedCount++;
+            console.log(`[UpdatePrice] ✅ Updated invoice ${detailId}: price_per_session = ${hocPhiRieng}`);
+          }).catch((err) => {
+            console.warn(`[UpdatePrice] Failed to update invoice ${detailId}:`, err);
+          })
+        );
+      });
+      
+      await Promise.all(updatePromises);
+      console.log(`[UpdatePrice] ✅ Updated ${updatedCount}/${checkedCount} invoice details for month ${targetMonth}/${targetYear}`);
+    } catch (error) {
+      console.error("[UpdatePrice] Failed to update prices from hoc_phi_rieng", error);
     }
   };
 

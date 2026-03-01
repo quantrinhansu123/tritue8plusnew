@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { DATABASE_URL_BASE, database } from "@/firebase";
-import { ref, onValue } from "firebase/database";
+import {
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+} from "@/utils/supabaseHelpers";
 import {
   Card,
   Row,
@@ -413,12 +416,11 @@ const ParentPortal: React.FC = () => {
 
   // Load rooms
   useEffect(() => {
-    const roomsRef = ref(database, "datasheet/Phòng_học");
-    const unsubscribe = onValue(roomsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Phòng_học", (data) => {
       if (data) {
+        const converted = convertFromSupabaseFormat(data, "phong_hoc");
         const roomsMap = new Map<string, any>();
-        Object.entries(data).forEach(([id, value]) => {
+        Object.entries(converted as Record<string, any>).forEach(([id, value]) => {
           roomsMap.set(id, { id, ...(value as any) });
         });
         setRooms(roomsMap);

@@ -14,8 +14,10 @@ import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import { useClasses } from "../hooks/useClasses";
 import { Class, ClassSchedule } from "../types";
 import dayjs from "dayjs";
-import { ref, onValue } from "firebase/database";
-import { database } from "../firebase";
+import {
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+} from "@/utils/supabaseHelpers";
 import { gradeOptions, subjectOptions } from "@/utils/selectOptions";
 
 interface ClassFormModalProps {
@@ -52,27 +54,21 @@ const ClassFormModal = ({
   // Load teachers
   useEffect(() => {
     setLoadingTeachers(true);
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(
-      teachersRef,
-      (snapshot) => {
-        const data = snapshot.val();
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Giáo_viên",
+      (data) => {
         console.log("ClassFormModal - Raw teacher data:", data);
-        if (data) {
-          const teacherList = Object.entries(data).map(([id, value]) => ({
-            id,
-            ...(value as Omit<Teacher, "id">),
-          }));
+        if (data && typeof data === "object") {
+          const teacherList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "giao_vien");
+            return { id, ...converted };
+          });
           console.log("ClassFormModal - Processed teacher list:", teacherList);
           setTeachers(teacherList);
         } else {
           console.warn("ClassFormModal - No teacher data found");
           setTeachers([]);
         }
-        setLoadingTeachers(false);
-      },
-      (error) => {
-        console.error("ClassFormModal - Error loading teachers:", error);
         setLoadingTeachers(false);
       }
     );
@@ -82,24 +78,18 @@ const ClassFormModal = ({
   // Load rooms
   useEffect(() => {
     setLoadingRooms(true);
-    const roomsRef = ref(database, "datasheet/Phòng_học");
-    const unsubscribe = onValue(
-      roomsRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const roomList = Object.entries(data).map(([id, value]) => ({
-            id,
-            ...(value as Omit<Room, "id">),
-          }));
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Phòng_học",
+      (data) => {
+        if (data && typeof data === "object") {
+          const roomList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "phong_hoc");
+            return { id, ...converted };
+          });
           setRooms(roomList);
         } else {
           setRooms([]);
         }
-        setLoadingRooms(false);
-      },
-      (error) => {
-        console.error("Error loading rooms:", error);
         setLoadingRooms(false);
       }
     );

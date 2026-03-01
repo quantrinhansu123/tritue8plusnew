@@ -32,8 +32,12 @@ import {
   DownOutlined,
   UndoOutlined,
 } from "@ant-design/icons";
-import { ref, onValue, update } from "firebase/database";
+import { ref, update } from "firebase/database";
 import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  convertFromSupabaseFormat,
+} from "../../utils/supabaseHelpers";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class, MonthlyComment, AttendanceSession, ClassStats } from "../../types";
 import WrapperContent from "../WrapperContent";
@@ -87,67 +91,83 @@ const AdminMonthlyReportReview = () => {
 
   // Load classes
   useEffect(() => {
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const classList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Class, "id">),
-        }));
-        setClasses(classList);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Lớp_học",
+      (data) => {
+        if (data && typeof data === "object") {
+          const classList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "lop_hoc");
+            return {
+              id,
+              ...(converted as Omit<Class, "id">),
+            };
+          });
+          setClasses(classList);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load all monthly comments
   useEffect(() => {
-    const commentsRef = ref(database, "datasheet/Nhận_xét_tháng");
-    const unsubscribe = onValue(commentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const commentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<MonthlyComment, "id">),
-        }));
-        setAllComments(commentList);
-      } else {
-        setAllComments([]);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Nhận_xét_tháng",
+      (data) => {
+        if (data && typeof data === "object") {
+          const commentList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "nhan_xet_thang");
+            return {
+              id,
+              ...(converted as Omit<MonthlyComment, "id">),
+            };
+          });
+          setAllComments(commentList);
+        } else {
+          setAllComments([]);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const sessionList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
-        setSessions(sessionList);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Điểm_danh_sessions",
+      (data) => {
+        if (data && typeof data === "object") {
+          const sessionList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...(converted as Omit<AttendanceSession, "id">),
+            };
+          });
+          setSessions(sessionList);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load students
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribe = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const studentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
-        setStudents(studentList);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Danh_sách_học_sinh",
+      (data) => {
+        if (data && typeof data === "object") {
+          const studentList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "danh_sach_hoc_sinh");
+            return {
+              id,
+              ...(converted as Omit<Student, "id">),
+            };
+          });
+          setStudents(studentList);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
@@ -155,15 +175,16 @@ const AdminMonthlyReportReview = () => {
   const [customScoresData, setCustomScoresData] = useState<{ [classId: string]: any }>({});
   
   useEffect(() => {
-    const customScoresRef = ref(database, "datasheet/Điểm_tự_nhập");
-    const unsubscribe = onValue(customScoresRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        setCustomScoresData(data);
-      } else {
-        setCustomScoresData({});
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Điểm_tự_nhập",
+      (data) => {
+        if (data && typeof data === "object") {
+          setCustomScoresData(data as any);
+        } else {
+          setCustomScoresData({});
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 

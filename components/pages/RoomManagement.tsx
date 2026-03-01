@@ -21,8 +21,16 @@ import {
   TeamOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { ref, onValue, push, update, remove } from "firebase/database";
+import { ref, update, remove } from "firebase/database";
 import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  supabaseSet,
+  supabaseUpdate,
+  supabaseRemove,
+  convertFromSupabaseFormat,
+  generateFirebaseId,
+} from "../../utils/supabaseHelpers";
 import WrapperContent from "@/components/WrapperContent";
 
 const { Text } = Typography;
@@ -61,18 +69,17 @@ const RoomManagement = () => {
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [form] = Form.useForm();
 
-  // Load rooms and classes from Firebase
+  // Load rooms and classes from Supabase
   useEffect(() => {
-    const roomsRef = ref(database, "datasheet/Phòng_học");
-    const classesRef = ref(database, "datasheet/Lớp_học");
-
-    const unsubscribeRooms = onValue(roomsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribeRooms = supabaseOnValue("datasheet/Phòng_học", (data) => {
       if (data) {
-        const roomsList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Room, "id">),
-        }));
+        const roomsList = Object.entries(data).map(([id, value]) => {
+          const converted = convertFromSupabaseFormat(value as any, "phong_hoc");
+          return {
+            id,
+            ...(converted as Omit<Room, "id">),
+          };
+        });
         setRooms(roomsList);
       } else {
         setRooms([]);
@@ -80,13 +87,15 @@ const RoomManagement = () => {
       setLoading(false);
     });
 
-    const unsubscribeClasses = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribeClasses = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data) {
-        const classList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Class, "id">),
-        }));
+        const classList = Object.entries(data).map(([id, value]) => {
+          const converted = convertFromSupabaseFormat(value as any, "lop_hoc");
+          return {
+            id,
+            ...(converted as Omit<Class, "id">),
+          };
+        });
         setClasses(classList);
       } else {
         setClasses([]);
@@ -146,8 +155,7 @@ const RoomManagement = () => {
 
   const handleDelete = async (roomId: string) => {
     try {
-      const roomRef = ref(database, `datasheet/Phòng_học/${roomId}`);
-      await remove(roomRef);
+      await supabaseRemove("datasheet/Phòng_học", roomId);
       message.success("Đã xóa phòng học thành công!");
     } catch (error) {
       console.error("Error deleting room:", error);
@@ -166,13 +174,12 @@ const RoomManagement = () => {
 
       if (editingRoom) {
         // Update existing room
-        const roomRef = ref(database, `datasheet/Phòng_học/${editingRoom.id}`);
-        await update(roomRef, roomData);
+        await supabaseUpdate("datasheet/Phòng_học", editingRoom.id, roomData);
         message.success("Đã cập nhật phòng học thành công!");
       } else {
         // Add new room
-        const roomsRef = ref(database, "datasheet/Phòng_học");
-        await push(roomsRef, roomData);
+        const newId = generateFirebaseId();
+        await supabaseSet("datasheet/Phòng_học", { id: newId, ...roomData });
         message.success("Đã thêm phòng học thành công!");
       }
 

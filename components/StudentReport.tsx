@@ -260,25 +260,29 @@ const StudentReport = ({
     return mergedScores;
   };
 
-  // Load monthly comments from Firebase
+  // Load monthly comments from Supabase
   useEffect(() => {
     if (!open || !student?.id) return;
 
-    const commentsRef = ref(database, "datasheet/Nhận_xét_tháng");
-    const unsubscribe = onValue(commentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const commentList = Object.entries(data)
-          .map(([id, value]) => ({
-            id,
-            ...(value as Omit<MonthlyComment, "id">),
-          }))
-          .filter((c) => c.studentId === student.id);
-        setMonthlyComments(commentList);
-      } else {
-        setMonthlyComments([]);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Nhận_xét_tháng",
+      (data) => {
+        if (data && typeof data === "object") {
+          const commentList = Object.entries(data)
+            .map(([id, value]) => {
+              const converted = convertFromSupabaseFormat(value, "nhan_xet_thang");
+              return {
+                id,
+                ...(converted as Omit<MonthlyComment, "id">),
+              };
+            })
+            .filter((c) => c.studentId === student.id);
+          setMonthlyComments(commentList);
+        } else {
+          setMonthlyComments([]);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, [open, student?.id]);
 

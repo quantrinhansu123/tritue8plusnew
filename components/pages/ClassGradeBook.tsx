@@ -28,9 +28,16 @@ import {
   SaveOutlined,
 } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, onValue, set, update } from "firebase/database";
+import { ref, onValue, get, update, set } from "firebase/database";
 import { database } from "../../firebase";
 import WrapperContent from "@/components/WrapperContent";
+import {
+  supabaseOnValue,
+  supabaseUpdate,
+  supabaseSet,
+  convertFromSupabaseFormat,
+  supabaseGetAll,
+} from "@/utils/supabaseHelpers";
 import { subjectMap } from "@/utils/selectOptions";
 import * as XLSX from "xlsx";
 import dayjs from "dayjs";
@@ -104,33 +111,41 @@ const ClassGradeBook = () => {
 
   // Load students
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribe = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const studentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
-        setStudents(studentList);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Danh_sách_học_sinh",
+      (data) => {
+        if (data && typeof data === "object") {
+          const studentList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "danh_sach_hoc_sinh");
+            return {
+              id,
+              ...(converted as Omit<Student, "id">),
+            };
+          });
+          setStudents(studentList);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const sessionsList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as any),
-        }));
-        setAttendanceSessions(sessionsList);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Điểm_danh_sessions",
+      (data) => {
+        if (data && typeof data === "object") {
+          const sessionsList = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...(converted as any),
+            };
+          });
+          setAttendanceSessions(sessionsList);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 

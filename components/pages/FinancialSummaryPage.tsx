@@ -1,6 +1,7 @@
 import WrapperContent from "@/components/WrapperContent";
 import { database, DATABASE_URL_BASE } from "@/firebase";
 import { ref, onValue, update, push, remove } from "firebase/database";
+import { supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 import {
   Card,
   Row,
@@ -161,14 +162,13 @@ const FinancialSummaryPage = () => {
     localStorage.setItem("expenseCategories", JSON.stringify(customCategories));
   };
 
-  // Load student invoices from Firebase
+  // Load student invoices from Supabase
   useEffect(() => {
-    const invoicesRef = ref(database, "datasheet/Phiếu_thu_học_phí");
-    const unsubscribe = onValue(invoicesRef, (snapshot) => {
-      const data = snapshot.val();
-      console.log("🔥 Firebase student invoices loaded:", data);
-      if (data) {
-        setStudentInvoices(data);
+    const unsubscribe = supabaseOnValue("datasheet/Phiếu_thu_học_phí", (data) => {
+      const converted = convertFromSupabaseFormat(data, "phieu_thu_hoc_phi");
+      console.log("🔥 Supabase student invoices loaded:", converted);
+      if (converted) {
+        setStudentInvoices(converted);
       }
       setLoading(false);
     });
@@ -176,13 +176,12 @@ const FinancialSummaryPage = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load expenses from Firebase
+  // Load expenses from Supabase
   useEffect(() => {
-    const expensesRef = ref(database, "datasheet/Chi_phí_vận_hành");
-    const unsubscribe = onValue(expensesRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Chi_phí_vận_hành", (data) => {
       if (data) {
-        const expensesList = Object.entries(data).map(([id, expense]: [string, any]) => ({
+        const converted = convertFromSupabaseFormat(data, "chi_phi_van_hanh");
+        const expensesList = Object.entries(converted as Record<string, any>).map(([id, expense]: [string, any]) => ({
           id,
           ...expense,
         }));
@@ -195,16 +194,17 @@ const FinancialSummaryPage = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load attendance sessions from Firebase
+  // Load attendance sessions from Supabase
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
-        const sessionsList = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
+        const sessionsList = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         setAttendanceSessions(sessionsList);
       } else {
         setAttendanceSessions([]);
@@ -214,15 +214,14 @@ const FinancialSummaryPage = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load teachers from Firebase
+  // Load teachers from Supabase
   useEffect(() => {
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
       if (data) {
-        const teachersList = Object.keys(data).map((key) => ({
+        const converted = convertFromSupabaseFormat(data, "giao_vien");
+        const teachersList = Object.keys(converted as Record<string, any>).map((key) => ({
           id: key,
-          ...data[key],
+          ...(converted as Record<string, any>)[key],
         }));
         setTeachers(teachersList);
       } else {
@@ -233,15 +232,14 @@ const FinancialSummaryPage = () => {
     return () => unsubscribe();
   }, []);
 
-  // Load classes from Firebase
+  // Load classes from Supabase
   useEffect(() => {
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data) {
-        const classesList = Object.keys(data).map((key) => ({
+        const converted = convertFromSupabaseFormat(data, "lop_hoc");
+        const classesList = Object.keys(converted as Record<string, any>).map((key) => ({
           id: key,
-          ...data[key],
+          ...(converted as Record<string, any>)[key],
         }));
         setClasses(classesList);
       } else {
@@ -257,13 +255,12 @@ const FinancialSummaryPage = () => {
   const [courses, setCourses] = useState<any[]>([]);
 
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribeStudents = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribeStudents = supabaseOnValue("datasheet/Danh_sách_học_sinh", (data) => {
       if (data) {
-        const studentsList = Object.keys(data).map((key) => ({
+        const converted = convertFromSupabaseFormat(data, "danh_sach_hoc_sinh");
+        const studentsList = Object.keys(converted as Record<string, any>).map((key) => ({
           id: key,
-          ...data[key],
+          ...(converted as Record<string, any>)[key],
         }));
         setStudents(studentsList);
       } else {
@@ -271,13 +268,12 @@ const FinancialSummaryPage = () => {
       }
     });
 
-    const coursesRef = ref(database, "datasheet/Khóa_học");
-    const unsubscribeCourses = onValue(coursesRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribeCourses = supabaseOnValue("datasheet/Khóa_học", (data) => {
       if (data) {
-        const coursesList = Object.keys(data).map((key) => ({
+        const converted = convertFromSupabaseFormat(data, "khoa_hoc");
+        const coursesList = Object.keys(converted as Record<string, any>).map((key) => ({
           id: key,
-          ...data[key],
+          ...(converted as Record<string, any>)[key],
         }));
         setCourses(coursesList);
       } else {

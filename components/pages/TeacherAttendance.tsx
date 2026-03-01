@@ -5,14 +5,14 @@ import { useClasses } from "../../hooks/useClasses";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class, AttendanceSession } from "../../types";
 import { useNavigate } from "react-router-dom";
-import { ref, onValue, remove, get, update } from "firebase/database";
+import { ref, remove, get, update } from "firebase/database";
 import { database } from "../../firebase";
 import dayjs, { Dayjs } from "dayjs";
 import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
 import WrapperContent from "@/components/WrapperContent";
 import { subjectMap } from "@/utils/selectOptions";
-import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
+import { supabaseGetAll, supabaseOnValue, supabaseRemove, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 
 dayjs.extend(isSameOrAfter);
 dayjs.extend(isSameOrBefore);
@@ -59,9 +59,7 @@ const TeacherAttendance = () => {
   useEffect(() => {
     if (!userProfile?.email) return;
 
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
       if (data) {
         const teacherEntry = Object.entries(data).find(
           ([_, teacher]: [string, any]) =>
@@ -79,38 +77,42 @@ const TeacherAttendance = () => {
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
-        const sessionsList = Object.entries(data).map(([id, value]) => ({
+        const sessionsList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
           id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
+          ...converted,
+        } as AttendanceSession;
+        });
         setAttendanceSessions(sessionsList);
       } else {
         setAttendanceSessions([]);
       }
       setLoadingSessions(false);
     });
+
     return () => unsubscribe();
   }, []);
 
   // Load timetable entries from Thời_khoá_biểu (custom schedules)
   useEffect(() => {
-    const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-    const unsubscribe = onValue(timetableRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Thời_khoá_biểu", (data) => {
       if (data) {
-        const entries = Object.entries(data).map(([id, value]: [string, any]) => ({
+        const entries = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "thoi_khoa_bieu");
+          return {
           id,
-          ...value,
-        }));
+          ...converted,
+        } as TimetableEntry;
+        });
         setTimetableEntries(entries);
       } else {
         setTimetableEntries([]);
       }
     });
+
     return () => unsubscribe();
   }, []);
 
@@ -323,8 +325,7 @@ const TeacherAttendance = () => {
 
     try {
       // Xóa session
-      const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${existingSession.id}`);
-      await remove(sessionRef);
+      await supabaseRemove("datasheet/Điểm_danh_sessions", existingSession.id);
 
       // Đồng bộ xóa invoice: giảm số buổi hoặc xóa invoice nếu không còn buổi nào
       const sessionDate = existingSession["Ngày"];
@@ -434,20 +435,20 @@ const TeacherAttendance = () => {
       const monthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
 
       // Get all monthly reports
-      const reportsRef = ref(database, "datasheet/Nhận_xét_tháng");
-      const reportsSnapshot = await get(reportsRef);
-      if (!reportsSnapshot.exists()) return;
-      const reportsData = reportsSnapshot.val();
+      const reportsData = await supabaseGetAll("datasheet/Nhận_xét_tháng");
 
       // Get all attendance sessions for recalculation
-      const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-      const sessionsSnapshot = await get(sessionsRef);
-      const sessionsData = sessionsSnapshot.exists() ? sessionsSnapshot.val() : {};
+      const sessionsData = await supabaseGetAll("datasheet/Điểm_danh_sessions");
       
-      const allSessions = Object.entries(sessionsData).map(([id, value]: [string, any]) => ({
-        id,
-        ...value,
-      }));
+      const allSessions = sessionsData
+        ? Object.entries(sessionsData).map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...converted,
+            };
+          })
+        : [];
 
       // Filter sessions for this month and class
       const monthSessions = allSessions.filter((s: any) => {
@@ -670,8 +671,7 @@ const TeacherAttendance = () => {
             description="Bạn có chắc chắn muốn xóa buổi điểm danh này? (Lớp nghỉ)"
             onConfirm={async () => {
               try {
-                const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${record.id}`);
-                await remove(sessionRef);
+                await supabaseRemove("datasheet/Điểm_danh_sessions", record.id);
                 message.success("Đã xóa buổi điểm danh");
               } catch (error) {
                 console.error("Error deleting session:", error);

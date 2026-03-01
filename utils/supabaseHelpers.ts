@@ -5,6 +5,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * Helper functions to replace Firebase Realtime Database operations with Supabase
  */
 
+// Generate Firebase-compatible ID (similar to Firebase's push() ID format)
+export const generateFirebaseId = (): string => {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const timestamp = Date.now().toString(36);
+  let id = "-" + timestamp;
+  for (let i = 0; i < 15; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+};
+
 // Track tables that don't exist to avoid repeated 404s
 const missingTables = new Set<string>();
 
@@ -318,6 +329,33 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
     });
   }
 
+  // For thoi_khoa_bieu table (Custom Timetable)
+  if (tableName === "thoi_khoa_bieu" || tableName === "Thời_khoá_biểu") {
+    const fieldMapping: Record<string, string> = {
+      class_id: "Class ID",
+      ma_lop: "Mã lớp",
+      ten_lop: "Tên lớp",
+      ngay: "Ngày",
+      thu: "Thứ",
+      gio_bat_dau: "Giờ bắt đầu",
+      gio_ket_thuc: "Giờ kết thúc",
+      phong_hoc: "Phòng học",
+      ghi_chu: "Ghi chú",
+      thay_the_ngay: "Thay thế ngày",
+      thay_the_thu: "Thay thế thứ",
+      teacher_id: "Teacher ID",
+      giao_vien: "Giáo viên",
+      timestamp: "Timestamp",
+    };
+
+    Object.entries(fieldMapping).forEach(([snakeCase, firebaseField]) => {
+      if (converted[snakeCase] !== undefined) {
+        converted[firebaseField] = converted[snakeCase];
+        delete converted[snakeCase];
+      }
+    });
+  }
+
   // For diem_tu_nhap table (Custom Scores)
   if (tableName === "diem_tu_nhap" || tableName === "Điểm_tự_nhập") {
     // Keep structure as is (columns and scores are JSONB)
@@ -440,6 +478,54 @@ export const supabaseGetByStudentMonthYear = async <T = any>(
   }
 
   return null;
+};
+
+/**
+ * Get invoice by student_id, month, year, and optionally class_id
+ * Returns the first matching invoice or null
+ * Note: For phieu_thu_hoc_phi (old format), class_id is ignored
+ *       For phieu_thu_hoc_phi_chi_tiet (new format), class_id is required
+ */
+export const supabaseGetInvoiceByKey = async (
+  tablePath: string,
+  studentId: string,
+  month: number,
+  year: number,
+  classId?: string
+): Promise<any | null> => {
+  const client = getClient(false);
+  const tableName = getTableName(tablePath);
+
+  let query = client
+    .from(tableName)
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("month", month)
+    .eq("year", year);
+
+  // If classId is provided and table supports it (phieu_thu_hoc_phi_chi_tiet), filter by it
+  if (classId && (tableName === "phieu_thu_hoc_phi_chi_tiet" || tableName === "Phieu_thu_hoc_phi_chi_tiet")) {
+    query = query.eq("class_id", classId);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    // If no record found, that's okay - return null
+    if (error.code === "PGRST116") {
+      return null;
+    }
+    console.error(`Error fetching invoice from ${tableName}:`, error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  // Convert from Supabase format
+  const convertedData = convertFromSupabaseFormat(data, tableName);
+  return convertedData;
 };
 
 /**
@@ -1326,6 +1412,36 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     // Ensure numeric fields are numbers
     if (typeof converted.hoc_phi_moi_buoi === "string") converted.hoc_phi_moi_buoi = parseFloat(converted.hoc_phi_moi_buoi) || null;
     if (typeof converted.luong_gv === "string") converted.luong_gv = parseFloat(converted.luong_gv) || null;
+  }
+
+  // For thoi_khoa_bieu table (Custom Timetable) - convert TO Supabase
+  if (tableName === "thoi_khoa_bieu" || tableName === "Thời_khoá_biểu") {
+    const fieldMapping: Record<string, string> = {
+      "Class ID": "class_id",
+      "Mã lớp": "ma_lop",
+      "Tên lớp": "ten_lop",
+      "Ngày": "ngay",
+      "Thứ": "thu",
+      "Giờ bắt đầu": "gio_bat_dau",
+      "Giờ kết thúc": "gio_ket_thuc",
+      "Phòng học": "phong_hoc",
+      "Ghi chú": "ghi_chu",
+      "Thay thế ngày": "thay_the_ngay",
+      "Thay thế thứ": "thay_the_thu",
+      "Teacher ID": "teacher_id",
+      "Giáo viên": "giao_vien",
+      "Timestamp": "timestamp",
+    };
+
+    Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
+      if (converted[firebaseField] !== undefined) {
+        converted[supabaseField] = converted[firebaseField];
+        delete converted[firebaseField];
+      }
+    });
+
+    if (typeof converted.thu === "string") converted.thu = parseInt(converted.thu, 10) || null;
+    if (typeof converted.thay_the_thu === "string") converted.thay_the_thu = parseInt(converted.thay_the_thu, 10) || null;
   }
 
   // For diem_tu_nhap table (Custom Scores) - convert TO Supabase

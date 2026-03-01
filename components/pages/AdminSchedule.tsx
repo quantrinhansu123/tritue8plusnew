@@ -35,8 +35,16 @@ import {
 import { useClasses } from "../../hooks/useClasses";
 import { Class, ClassSchedule, AttendanceSession } from "../../types";
 import { useNavigate } from "react-router-dom";
-import { ref, onValue, set, push, remove, update, get } from "firebase/database";
-import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  supabaseSet,
+  supabaseRemove,
+  supabaseUpdate,
+  supabaseGetAll,
+  supabaseGetInvoiceByKey,
+  convertFromSupabaseFormat,
+  generateFirebaseId,
+} from "../../utils/supabaseHelpers";
 import dayjs, { Dayjs } from "dayjs";
 import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
 import isSameOrBefore from "dayjs/plugin/isSameOrBefore";
@@ -167,30 +175,30 @@ const AdminSchedule = () => {
 
   // Load rooms
   useEffect(() => {
-    const roomsRef = ref(database, "datasheet/Phòng_học");
-    const unsubscribe = onValue(roomsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const roomsMap = new Map();
-        Object.entries(data).forEach(([id, room]: [string, any]) => {
-          roomsMap.set(id, room);
-        });
-        setRooms(roomsMap);
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Phòng_học",
+      (data) => {
+        if (data && typeof data === "object") {
+          const roomsMap = new Map();
+          Object.entries(data).forEach(([id, room]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(room, "phong_hoc");
+            roomsMap.set(id, converted);
+          });
+          setRooms(roomsMap);
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const sessionsArray = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as any),
-        }));
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
+      if (data && typeof data === 'object') {
+        const sessionsArray = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return { id, ...converted };
+        });
         setAttendanceSessions(sessionsArray);
       } else {
         setAttendanceSessions([]);
@@ -201,33 +209,34 @@ const AdminSchedule = () => {
 
   // Load staff schedules from Lịch_trực_trung_tâm
   useEffect(() => {
-    const staffScheduleRef = ref(database, "datasheet/Lịch_trực_trung_tâm");
-    const unsubscribe = onValue(staffScheduleRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const schedulesMap = new Map<string, StaffSchedule>();
-        Object.entries(data).forEach(([id, value]: [string, any]) => {
-          schedulesMap.set(id, { id, ...value });
-        });
-        setStaffSchedules(schedulesMap);
-      } else {
-        setStaffSchedules(new Map());
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Lịch_trực_trung_tâm",
+      (data) => {
+        if (data && typeof data === "object") {
+          const schedulesMap = new Map<string, StaffSchedule>();
+          Object.entries(data).forEach(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lich_truc_tung_tam");
+            schedulesMap.set(id, { id, ...converted });
+          });
+          setStaffSchedules(schedulesMap);
+        } else {
+          setStaffSchedules(new Map());
+        }
       }
-    });
+    );
     return () => unsubscribe();
   }, []);
 
   // Load timetable entries from Thời_khoá_biểu
   useEffect(() => {
-    const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-    const unsubscribe = onValue(timetableRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
+    const unsubscribe = supabaseOnValue("datasheet/Thời_khoá_biểu", (data) => {
+      if (data && typeof data === 'object') {
         const entriesMap = new Map<string, TimetableEntry>();
         Object.entries(data).forEach(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "thoi_khoa_bieu");
           // Create a unique key: Class ID + Date + Thứ
-          const key = `${value["Class ID"]}_${value["Ngày"]}_${value["Thứ"]}`;
-          entriesMap.set(key, { id, ...value });
+          const key = `${converted["Class ID"]}_${converted["Ngày"]}_${converted["Thứ"]}`;
+          entriesMap.set(key, { id, ...converted });
         });
         setTimetableEntries(entriesMap);
       } else {
@@ -885,7 +894,6 @@ const AdminSchedule = () => {
   // Lưu lịch cho tất cả các tuần (cập nhật lịch gốc của lớp)
   const saveScheduleAllWeeks = async (event: ScheduleEvent, values: any) => {
     try {
-      const classRef = ref(database, `datasheet/Lớp_học/${event.class.id}`);
       const currentSchedules = event.class["Lịch học"] || [];
       const dayOfWeek = event.schedule["Thứ"];
       const oldStartTime = event.schedule["Giờ bắt đầu"];
@@ -913,7 +921,7 @@ const AdminSchedule = () => {
         updateData["Phòng học"] = values["Phòng học"];
       }
 
-      await update(classRef, updateData);
+      await supabaseUpdate("datasheet/Lớp_học", event.class.id, updateData);
 
       // Xóa tất cả các lịch bù cùng thứ của lớp này (vì đã cập nhật lịch gốc)
       const entriesToDelete: string[] = [];
@@ -924,8 +932,7 @@ const AdminSchedule = () => {
       });
 
       for (const entryId of entriesToDelete) {
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${entryId}`);
-        await remove(entryRef);
+        await supabaseRemove(`datasheet/Thời_khoá_biểu`, entryId);
       }
 
       // Cập nhật tất cả attendance sessions trong tương lai có cùng Class ID và cùng thứ
@@ -958,8 +965,7 @@ const AdminSchedule = () => {
 
       // Cập nhật tất cả sessions
       for (const { id, session } of sessionsToUpdate) {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${id}`);
-        await update(sessionRef, {
+        await supabaseUpdate(`datasheet/Điểm_danh_sessions`, id, {
           "Giờ bắt đầu": newStartTime,
           "Giờ kết thúc": newEndTime,
         });
@@ -997,14 +1003,12 @@ const AdminSchedule = () => {
 
       if (event.scheduleId) {
         // Cập nhật lịch bù hiện có
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${event.scheduleId}`);
-        await set(entryRef, timetableData);
+        await supabaseSet(`datasheet/Thời_khoá_biểu`, { ...timetableData, id: event.scheduleId });
         message.success("Đã cập nhật lịch học bù");
       } else {
         // Tạo lịch bù mới
-        const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-        const newEntryRef = push(timetableRef);
-        await set(newEntryRef, timetableData);
+        const newEntryId = generateFirebaseId();
+        await supabaseSet(`datasheet/Thời_khoá_biểu`, { ...timetableData, id: newEntryId });
         message.success("Đã tạo lịch học bù cho ngày này");
       }
 
@@ -1015,7 +1019,6 @@ const AdminSchedule = () => {
 
       if (sessionForThisDate) {
         // Cập nhật session đã có
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionForThisDate.id}`);
         const sessionUpdate: any = {
           "Giờ bắt đầu": newStartTime,
           "Giờ kết thúc": newEndTime,
@@ -1023,11 +1026,10 @@ const AdminSchedule = () => {
         // Cập nhật học phí và lương nếu có
         if (values.tuitionPerSession) sessionUpdate["Học phí mỗi buổi"] = values.tuitionPerSession;
         if (values.salaryPerSession) sessionUpdate["Lương GV"] = values.salaryPerSession;
-        await update(sessionRef, sessionUpdate);
+        await supabaseUpdate(`datasheet/Điểm_danh_sessions`, sessionForThisDate.id, sessionUpdate);
         message.success("Đã cập nhật lịch học bù và buổi điểm danh của ngày này");
       } else {
         // Tạo session mới nếu chưa có
-        const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
         const newSessionData: Omit<AttendanceSession, "id"> = {
           "Mã lớp": event.class["Mã lớp"],
           "Tên lớp": event.class["Tên lớp"],
@@ -1044,7 +1046,8 @@ const AdminSchedule = () => {
           "Học phí mỗi buổi": values.tuitionPerSession || event.class["Học phí mỗi buổi"] || undefined,
           "Lương GV": values.salaryPerSession || event.class["Lương GV"] || undefined,
         };
-        await push(sessionsRef, newSessionData);
+        const newSessionId = generateFirebaseId();
+        await supabaseSet(`datasheet/Điểm_danh_sessions`, { ...newSessionData, id: newSessionId });
         message.success("Đã cập nhật lịch học bù và tạo session điểm danh mới");
       }
 
@@ -1088,7 +1091,6 @@ const AdminSchedule = () => {
       const startTime = event.schedule["Giờ bắt đầu"];
       const endTime = event.schedule["Giờ kết thúc"];
 
-      const classRef = ref(database, `datasheet/Lớp_học/${event.class.id}`);
       const currentSchedules = event.class["Lịch học"] || [];
 
       // Cập nhật thứ trong lịch học của lớp
@@ -1104,7 +1106,7 @@ const AdminSchedule = () => {
         return s;
       });
 
-      await update(classRef, { "Lịch học": updatedSchedules });
+      await supabaseUpdate("datasheet/Lớp_học", event.class.id, { "Lịch học": updatedSchedules });
 
       // Xóa tất cả các lịch bù liên quan đến thứ cũ của lớp này
       const entriesToDelete: string[] = [];
@@ -1116,8 +1118,7 @@ const AdminSchedule = () => {
       });
 
       for (const entryId of entriesToDelete) {
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${entryId}`);
-        await remove(entryRef);
+        await supabaseRemove(`datasheet/Thời_khoá_biểu`, entryId);
       }
 
       // Cập nhật tất cả attendance sessions trong tương lai: di chuyển từ thứ cũ sang thứ mới
@@ -1149,8 +1150,7 @@ const AdminSchedule = () => {
 
       // Cập nhật tất cả sessions: di chuyển ngày từ thứ cũ sang thứ mới
       for (const { id, newDate } of sessionsToUpdate) {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${id}`);
-        await update(sessionRef, {
+        await supabaseUpdate(`datasheet/Điểm_danh_sessions`, id, {
           "Ngày": newDate,
         });
       }
@@ -1200,13 +1200,11 @@ const AdminSchedule = () => {
         }
 
         // Xóa entry cũ và tạo mới
-        const oldEntryRef = ref(database, `datasheet/Thời_khoá_biểu/${event.scheduleId}`);
-        await remove(oldEntryRef);
+        await supabaseRemove(`datasheet/Thời_khoá_biểu`, event.scheduleId);
       }
 
-      const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-      const newEntryRef = push(timetableRef);
-      await set(newEntryRef, timetableData);
+      const newEntryId = generateFirebaseId();
+      await supabaseSet(`datasheet/Thời_khoá_biểu`, { ...timetableData, id: newEntryId });
 
       // Cập nhật attendance session: di chuyển từ ngày cũ sang ngày mới (nếu có)
       const sessionForOldDate = attendanceSessions.find(
@@ -1214,8 +1212,7 @@ const AdminSchedule = () => {
       );
 
       if (sessionForOldDate) {
-        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionForOldDate.id}`);
-        await update(sessionRef, {
+        await supabaseUpdate(`datasheet/Điểm_danh_sessions`, sessionForOldDate.id, {
           "Ngày": newDateStr,
         });
         message.success(`Đã di chuyển lịch và buổi điểm danh từ ${oldDateStr} sang ${newDateStr}`);
@@ -1237,8 +1234,7 @@ const AdminSchedule = () => {
     if (!editingEvent || !editingEvent.scheduleId) return;
 
     try {
-      const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${editingEvent.scheduleId}`);
-      await remove(entryRef);
+      await supabaseRemove(`datasheet/Thời_khoá_biểu`, editingEvent.scheduleId);
       message.success("Đã xóa lịch học khỏi thời khóa biểu");
       setIsEditModalOpen(false);
       setEditingEvent(null);
@@ -1343,8 +1339,7 @@ const AdminSchedule = () => {
                   });
 
                   for (const scheduleId of schedulesToUpdate) {
-                    const scheduleRef = ref(database, `datasheet/Lịch_trực_trung_tâm/${scheduleId}`);
-                    await update(scheduleRef, { "Thứ": newDayOfWeek });
+                    await supabaseUpdate("datasheet/Lịch_trực_trung_tâm", scheduleId, { "Thứ": newDayOfWeek });
                   }
 
                   message.success(`Đã chuyển ${schedulesToUpdate.length} lịch trực từ ${oldDayName} sang ${newDayName}`);
@@ -1382,13 +1377,12 @@ const AdminSchedule = () => {
                 "Thay thế thứ": oldDayOfWeek, // Track original day
               };
 
-              const schedulesRef = ref(database, "datasheet/Lịch_trực_trung_tâm");
-              await push(schedulesRef, makeupScheduleData);
+              const newId = generateFirebaseId();
+              await supabaseSet("datasheet/Lịch_trực_trung_tâm", { id: newId, ...makeupScheduleData });
               message.success(`Đã chuyển lịch trực từ ${oldDayName} sang ${newDayName} cho ngày này`);
             } else {
               // Moving an existing date-specific schedule
-              const scheduleRef = ref(database, `datasheet/Lịch_trực_trung_tâm/${draggedSchedule.id}`);
-              await update(scheduleRef, {
+              await supabaseUpdate("datasheet/Lịch_trực_trung_tâm", draggedSchedule.id, {
                 "Thứ": newDayOfWeek,
                 "Ngày": targetDateStr,
               });
@@ -1987,8 +1981,7 @@ const AdminSchedule = () => {
                                               onOk: async () => {
                                                 if (event.isCustomSchedule && event.scheduleId) {
                                                   try {
-                                                    const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${event.scheduleId}`);
-                                                    await remove(entryRef);
+                                                    await supabaseRemove(`datasheet/Thời_khoá_biểu`, event.scheduleId);
                                                     message.success('Đã xóa lịch bù thành công');
                                                   } catch (error) {
                                                     console.error('Error deleting schedule:', error);
@@ -2416,98 +2409,108 @@ const AdminSchedule = () => {
                     onOk: async () => {
                       try {
                         // Xóa attendance session tương ứng
-                        const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-                        const snapshot = await get(sessionsRef);
-                        if (snapshot.exists()) {
-                          const sessions = snapshot.val();
-                          for (const [sessionId, session] of Object.entries(sessions)) {
-                            const s = session as any;
-                            if (s["Class ID"] === editingStaffSchedule?.["Class ID"] &&
-                              s["Ngày"] === editingStaffSchedule?.["Ngày"]) {
-                              
-                              // Đồng bộ xóa invoice cho từng học sinh
-                              const attendanceRecords = s["Điểm danh"] || [];
-                              const sessionDate = s["Ngày"];
-                              const classId = s["Class ID"];
-                              const sessionDateObj = new Date(sessionDate);
-                              const targetMonth = sessionDateObj.getMonth();
-                              const targetYear = sessionDateObj.getFullYear();
+                        // Already have attendanceSessions loaded via supabaseOnValue, no need to get again
+                        for (const session of attendanceSessions) {
+                          const s = session as any;
+                          if (s["Class ID"] === editingStaffSchedule?.["Class ID"] &&
+                            s["Ngày"] === editingStaffSchedule?.["Ngày"]) {
+                            
+                            // Đồng bộ xóa invoice cho từng học sinh
+                            const attendanceRecords = s["Điểm danh"] || [];
+                            const sessionDate = s["Ngày"];
+                            const classId = s["Class ID"];
+                            const sessionDateObj = new Date(sessionDate);
+                            const targetMonth = sessionDateObj.getMonth();
+                            const targetYear = sessionDateObj.getFullYear();
 
-                              for (const record of attendanceRecords) {
-                                const studentId = record["Student ID"];
-                                if (!studentId) continue;
+                            for (const record of attendanceRecords) {
+                              const studentId = record["Student ID"];
+                              if (!studentId) continue;
 
-                                // Key format mới
-                                const invoiceKey = `${studentId}-${classId}-${targetMonth}-${targetYear}`;
-                                const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceKey}`);
-                                const invoiceSnapshot = await get(invoiceRef);
-                                if (invoiceSnapshot.exists()) {
-                                  const invoiceData = invoiceSnapshot.val();
-                                  if (invoiceData.status !== "paid") {
-                                    const invoiceSessions = Array.isArray(invoiceData.sessions) ? invoiceData.sessions : [];
-                                    const filteredSessions = invoiceSessions.filter((is: any) => is["Ngày"] !== sessionDate);
-                                    if (filteredSessions.length === 0) {
-                                      await remove(invoiceRef);
-                                    } else {
-                                      const pricePerSession = (invoiceData.totalAmount || 0) / (invoiceSessions.length || 1);
-                                      await update(invoiceRef, {
-                                        sessions: filteredSessions,
-                                        totalSessions: filteredSessions.length,
-                                        totalAmount: pricePerSession * filteredSessions.length,
-                                        finalAmount: Math.max(0, pricePerSession * filteredSessions.length - (invoiceData.discount || 0)),
-                                      });
-                                    }
+                                // Key format mới: query từ phieu_thu_hoc_phi_chi_tiet
+                                // Convert month from 0-11 to 1-12 for Supabase
+                                const supabaseMonth = targetMonth + 1;
+                                const invoiceData = await supabaseGetInvoiceByKey(
+                                  "datasheet/Phiếu_thu_học_phí_chi_tiết",
+                                  studentId,
+                                  supabaseMonth,
+                                  targetYear,
+                                  classId
+                                );
+                                
+                                if (invoiceData && invoiceData.status !== "paid") {
+                                  const invoiceSessions = Array.isArray(invoiceData.sessions) ? invoiceData.sessions : [];
+                                  const filteredSessions = invoiceSessions.filter((is: any) => is["Ngày"] !== sessionDate);
+                                  
+                                  if (filteredSessions.length === 0) {
+                                    // Xóa invoice nếu không còn session nào
+                                    await supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", invoiceData.id);
+                                  } else {
+                                    // Cập nhật invoice với số buổi mới
+                                    const pricePerSession = (invoiceData.totalAmount || 0) / (invoiceSessions.length || 1);
+                                    const newTotalAmount = pricePerSession * filteredSessions.length;
+                                    const newFinalAmount = Math.max(0, newTotalAmount - (invoiceData.discount || 0));
+                                    
+                                    await supabaseUpdate("datasheet/Phiếu_thu_học_phí_chi_tiết", invoiceData.id, {
+                                      sessions: filteredSessions,
+                                      totalSessions: filteredSessions.length,
+                                      totalAmount: newTotalAmount,
+                                      finalAmount: newFinalAmount,
+                                    });
                                   }
                                 }
                                 
-                                // Key format cũ
-                                const oldInvoiceKey = `${studentId}-${targetMonth}-${targetYear}`;
-                                const oldInvoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${oldInvoiceKey}`);
-                                const oldInvoiceSnapshot = await get(oldInvoiceRef);
-                                if (oldInvoiceSnapshot.exists()) {
-                                  const invoiceData = oldInvoiceSnapshot.val();
-                                  if (invoiceData.status !== "paid") {
-                                    const invoiceSessions = Array.isArray(invoiceData.sessions) ? invoiceData.sessions : [];
-                                    const filteredSessions = invoiceSessions.filter((is: any) => !(is["Ngày"] === sessionDate && is["Class ID"] === classId));
-                                    if (filteredSessions.length === 0) {
-                                      await remove(oldInvoiceRef);
-                                    } else {
-                                      const pricePerSession = (invoiceData.totalAmount || 0) / (invoiceSessions.length || 1);
-                                      await update(oldInvoiceRef, {
-                                        sessions: filteredSessions,
-                                        totalSessions: filteredSessions.length,
-                                        totalAmount: pricePerSession * filteredSessions.length,
-                                        finalAmount: Math.max(0, pricePerSession * filteredSessions.length - (invoiceData.discount || 0)),
-                                      });
-                                    }
+                                // Key format cũ: query từ phieu_thu_hoc_phi (không có class_id)
+                                const oldInvoiceData = await supabaseGetInvoiceByKey(
+                                  "datasheet/Phiếu_thu_học_phí",
+                                  studentId,
+                                  supabaseMonth,
+                                  targetYear
+                                );
+                                
+                                if (oldInvoiceData && oldInvoiceData.status !== "paid") {
+                                  const invoiceSessions = Array.isArray(oldInvoiceData.sessions) ? oldInvoiceData.sessions : [];
+                                  const filteredSessions = invoiceSessions.filter((is: any) => !(is["Ngày"] === sessionDate && is["Class ID"] === classId));
+                                  
+                                  if (filteredSessions.length === 0) {
+                                    // Xóa invoice nếu không còn session nào
+                                    await supabaseRemove("datasheet/Phiếu_thu_học_phí", oldInvoiceData.id);
+                                  } else {
+                                    // Cập nhật invoice với số buổi mới
+                                    const pricePerSession = (oldInvoiceData.totalAmount || 0) / (invoiceSessions.length || 1);
+                                    const newTotalAmount = pricePerSession * filteredSessions.length;
+                                    const newFinalAmount = Math.max(0, newTotalAmount - (oldInvoiceData.discount || 0));
+                                    
+                                    await supabaseUpdate("datasheet/Phiếu_thu_học_phí", oldInvoiceData.id, {
+                                      sessions: filteredSessions,
+                                      totalSessions: filteredSessions.length,
+                                      totalAmount: newTotalAmount,
+                                      finalAmount: newFinalAmount,
+                                    });
                                   }
                                 }
                               }
                               
-                              await remove(ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`));
+                              await supabaseRemove(`datasheet/Điểm_danh_sessions`, session.id);
                               
                               // Sync monthly reports for affected students
                               const affectedStudentIds = attendanceRecords.map((r: any) => r["Student ID"]).filter(Boolean) as string[];
                               if (affectedStudentIds.length > 0) {
                                 // Get all monthly reports
-                                const reportsRef = ref(database, "datasheet/Nhận_xét_tháng");
-                                const reportsSnapshot = await get(reportsRef);
-                                if (reportsSnapshot.exists()) {
-                                  const reportsData = reportsSnapshot.val();
+                                const reportsData = await supabaseGetAll("datasheet/Nhận_xét_tháng");
+                                if (reportsData) {
                                   const monthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
 
-                                  // Get remaining sessions for this month and class
-                                  const remainingSessionsSnapshot = await get(sessionsRef);
-                                  const remainingSessions = remainingSessionsSnapshot.exists() 
-                                    ? Object.entries(remainingSessionsSnapshot.val())
-                                        .map(([id, v]: [string, any]) => ({ id, ...v }))
-                                        .filter((ses: any) => {
-                                          const sDate = dayjs(ses["Ngày"]);
-                                          return sDate.month() === targetMonth &&
-                                                 sDate.year() === targetYear &&
-                                                 ses["Class ID"] === classId;
-                                        })
-                                    : [];
+                                  // Get remaining sessions for this month and class (filter from in-memory attendanceSessions)
+                                  const remainingSessions = attendanceSessions
+                                    .map((ses: any) => ({ id: ses.id, ...ses }))
+                                    .filter((ses: any) => {
+                                      const sDate = dayjs(ses["Ngày"]);
+                                      return sDate.month() === targetMonth &&
+                                             sDate.year() === targetYear &&
+                                             ses["Class ID"] === classId &&
+                                             ses.id !== session.id; // Exclude the deleted session
+                                    });
 
                                   for (const [reportId, report] of Object.entries(reportsData) as [string, any][]) {
                                     if (report.month !== monthStr) continue;
@@ -2549,7 +2552,7 @@ const AdminSchedule = () => {
                                     const newPresent = updatedClassStats.reduce((sum: number, cs: any) => sum + (cs.presentSessions || 0), 0);
                                     const newAbsent = updatedClassStats.reduce((sum: number, cs: any) => sum + (cs.absentSessions || 0), 0);
 
-                                    await update(ref(database, `datasheet/Nhận_xét_tháng/${reportId}`), {
+                                    await supabaseUpdate("datasheet/Nhận_xét_tháng", reportId, {
                                       stats: {
                                         ...report.stats,
                                         totalSessions: newTotal,
@@ -2567,7 +2570,6 @@ const AdminSchedule = () => {
                               break;
                             }
                           }
-                        }
                         message.success("Đã xóa lịch học và cập nhật hóa đơn");
                         setIsStaffScheduleModalOpen(false);
                         setEditingStaffSchedule(null);
@@ -2643,13 +2645,14 @@ const AdminSchedule = () => {
                 "Ghi chú": values.note || "",
               };
 
-              // Thực hiện luu vào firebase song song
-              const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-              const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
+              // Generate IDs for new records
+              const sessionId = generateFirebaseId();
+              const timetableId = generateFirebaseId();
 
+              // Save to Supabase in parallel
               await Promise.all([
-                push(sessionsRef, sessionData),
-                push(timetableRef, timetableData)
+                supabaseSet(`datasheet/Điểm_danh_sessions`, { ...sessionData, id: sessionId }),
+                supabaseSet(`datasheet/Thời_khoá_biểu`, { ...timetableData, id: timetableId })
               ]);
 
               message.success("Đã thêm lịch học và tạo session điểm danh");
@@ -2688,28 +2691,18 @@ const AdminSchedule = () => {
                 if (selectedClass) {
                   const date = staffScheduleForm.getFieldValue("date");
                   if (date) {
-                    // Kiểm tra xem đã có session cho lớp và ngày này chưa
+                    // Check if session already exists in memory
                     const sessionDate = date.format("YYYY-MM-DD");
-                    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-                    const snapshot = await get(sessionsRef);
-                    let foundSession: any = null;
-                    if (snapshot.exists()) {
-                      const sessions = snapshot.val();
-                      for (const session of Object.values(sessions)) {
-                        const s = session as any;
-                        if (s["Class ID"] === classId && s["Ngày"] === sessionDate) {
-                          foundSession = s;
-                          break;
-                        }
-                      }
-                    }
-                    // Tự động điền từ session đã có (ưu tiên) hoặc từ lớp
+                    const foundSession = attendanceSessions.find((s: any) =>
+                      s["Class ID"] === classId && s["Ngày"] === sessionDate
+                    );
+                    // Auto-fill from existing session (priority) or from class
                     staffScheduleForm.setFieldsValue({
                       tuitionPerSession: foundSession?.["Học phí mỗi buổi"] || selectedClass["Học phí mỗi buổi"] || undefined,
                       salaryPerSession: foundSession?.["Lương GV"] || selectedClass["Lương GV"] || undefined,
                     });
                   } else {
-                    // Chỉ điền từ lớp nếu chưa chọn ngày
+                    // Only fill from class if date not selected yet
                     staffScheduleForm.setFieldsValue({
                       tuitionPerSession: selectedClass["Học phí mỗi buổi"] || undefined,
                       salaryPerSession: selectedClass["Lương GV"] || undefined,
@@ -2735,22 +2728,12 @@ const AdminSchedule = () => {
                   if (classId) {
                     const selectedClass = classes.find(c => c.id === classId);
                     if (selectedClass) {
-                      // Kiểm tra xem đã có session cho lớp và ngày này chưa
+                      // Check if session already exists in memory
                       const sessionDate = date.format("YYYY-MM-DD");
-                      const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-                      const snapshot = await get(sessionsRef);
-                      let foundSession: any = null;
-                      if (snapshot.exists()) {
-                        const sessions = snapshot.val();
-                        for (const session of Object.values(sessions)) {
-                          const s = session as any;
-                          if (s["Class ID"] === classId && s["Ngày"] === sessionDate) {
-                            foundSession = s;
-                            break;
-                          }
-                        }
-                      }
-                      // Tự động điền từ session đã có (ưu tiên) hoặc từ lớp
+                      const foundSession = attendanceSessions.find((s: any) =>
+                        s["Class ID"] === classId && s["Ngày"] === sessionDate
+                      );
+                      // Auto-fill from existing session (priority) or from class
                       staffScheduleForm.setFieldsValue({
                         tuitionPerSession: foundSession?.["Học phí mỗi buổi"] || selectedClass["Học phí mỗi buổi"] || undefined,
                         salaryPerSession: foundSession?.["Lương GV"] || selectedClass["Lương GV"] || undefined,

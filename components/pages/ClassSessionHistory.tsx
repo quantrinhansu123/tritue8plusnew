@@ -15,8 +15,16 @@ import {
 } from "antd";
 import { EyeOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, PrinterOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
-import { ref, onValue, update, remove, get } from "firebase/database";
+import { ref, onValue, get, update, remove, set } from "firebase/database";
 import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  supabaseUpdate,
+  supabaseRemove,
+  supabaseGetAll,
+  supabaseGetById,
+  convertFromSupabaseFormat,
+} from "@/utils/supabaseHelpers";
 import { AttendanceSession, AttendanceRecord } from "../../types";
 import dayjs from "dayjs";
 
@@ -46,15 +54,11 @@ const ClassSessionHistory = () => {
       return;
     }
 
-    const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
-    const unsubscribe = onValue(classRef, (snapshot) => {
-      const data = snapshot.val();
+    supabaseGetById("datasheet/Lớp_học", classId).then((data) => {
       if (data) {
         setClassData({ id: classId, ...data });
       }
     });
-
-    return () => unsubscribe();
   }, [classId]);
 
   useEffect(() => {
@@ -64,35 +68,39 @@ const ClassSessionHistory = () => {
       return;
     }
 
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const allSessions = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
+    const unsubscribe = supabaseOnValue(
+      "datasheet/Điểm_danh_sessions",
+      (data) => {
+        if (data && typeof data === "object") {
+          const allSessions = Object.entries(data).map(([id, value]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id,
+              ...(converted as Omit<AttendanceSession, "id">),
+            };
+          });
 
-        // Filter sessions for this class - try both "Class ID" and "Mã lớp"
-        const classSessions = allSessions
-          .filter((s) => {
-            // Try Class ID first
-            if (s["Class ID"] === classId) return true;
-            // Fallback to Mã lớp if Class ID doesn't match
-            if (classData && s["Mã lớp"] === classData["Mã lớp"]) return true;
-            return false;
-          })
-          .sort(
-            (a, b) =>
-              new Date(b["Ngày"]).getTime() - new Date(a["Ngày"]).getTime()
-          );
+          // Filter sessions for this class - try both "Class ID" and "Mã lớp"
+          const classSessions = allSessions
+            .filter((s) => {
+              // Try Class ID first
+              if (s["Class ID"] === classId) return true;
+              // Fallback to Mã lớp if Class ID doesn't match
+              if (classData && s["Mã lớp"] === classData["Mã lớp"]) return true;
+              return false;
+            })
+            .sort(
+              (a, b) =>
+                new Date(b["Ngày"]).getTime() - new Date(a["Ngày"]).getTime()
+            );
 
-        setSessions(classSessions);
-      } else {
-        setSessions([]);
+          setSessions(classSessions);
+        } else {
+          setSessions([]);
+        }
+        setLoading(false);
       }
-      setLoading(false);
-    });
+    );
 
     return () => unsubscribe();
   }, [classId, classData]);
@@ -304,20 +312,17 @@ const ClassSessionHistory = () => {
       const monthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
 
       // Get all monthly reports
-      const reportsRef = ref(database, "datasheet/Nhận_xét_tháng");
-      const reportsSnapshot = await get(reportsRef);
-      if (!reportsSnapshot.exists()) return;
-      const reportsData = reportsSnapshot.val();
+      const reportsData = await supabaseGetAll("datasheet/Nhận_xét_tháng");
 
       // Get all attendance sessions for recalculation
-      const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-      const sessionsSnapshot = await get(sessionsRef);
-      const sessionsData = sessionsSnapshot.exists() ? sessionsSnapshot.val() : {};
+      const sessionsData = await supabaseGetAll("datasheet/Điểm_danh_sessions");
       
-      const allSessions = Object.entries(sessionsData).map(([id, value]: [string, any]) => ({
-        id,
-        ...value,
-      }));
+      const allSessions = sessionsData
+        ? Object.entries(sessionsData).map(([id, value]: [string, any]) => ({  
+            id,
+            ...value,
+          }))
+        : [];
 
       // Filter sessions for this month and class
       const monthSessions = allSessions.filter((s: any) => {

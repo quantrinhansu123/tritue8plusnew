@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE, database } from "@/firebase";
 import { ref, onValue, get } from "firebase/database";
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 import { subjectOptions } from "@/utils/selectOptions";
 import {
   Button,
@@ -198,25 +199,27 @@ const TeacherListView: React.FC = () => {
 
   // 🔄 Refresh data when user focuses on window/tab
   useEffect(() => {
-    const handleFocus = () => {
+    const handleFocus = async () => {
       console.log("👁️ Window focused - refreshing attendance data...");
-      const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-      get(sessionsRef).then((snapshot) => {
-        const data = snapshot.val();
+      try {
+        const data = await supabaseGetAll("datasheet/Điểm_danh_sessions");
         if (data) {
-          const sessionsArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
+          const sessionsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
           console.log("🔄 Refreshed attendance sessions:", {
             total: sessionsArray.length,
             timestamp: new Date().toISOString(),
           });
           setAttendanceSessions(sessionsArray);
         }
-      }).catch((error) => {
+      } catch (error) {
         console.error("❌ Error refreshing sessions:", error);
-      });
+      }
     };
 
     window.addEventListener('focus', handleFocus);
@@ -273,41 +276,49 @@ const TeacherListView: React.FC = () => {
     console.log("🎯 Setting up realtime listener for attendance sessions...");
     
     // Force load initial data immediately
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    get(sessionsRef).then((snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const sessionsArray = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
-        console.log("📊 Initial attendance sessions loaded:", {
-          total: sessionsArray.length,
-          sample: sessionsArray.slice(0, 2).map(s => ({
-            id: s.id,
-            "Class ID": s["Class ID"],
-            "Teacher ID": s["Teacher ID"],
-            "Giáo viên": s["Giáo viên"],
-            "Trạng thái": s["Trạng thái"],
-            "Ngày": s["Ngày"],
-          }))
-        });
-        setAttendanceSessions(sessionsArray);
+    const loadInitial = async () => {
+      try {
+        const data = await supabaseGetAll("datasheet/Điểm_danh_sessions");
+        if (data) {
+          const sessionsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          console.log("📊 Initial attendance sessions loaded:", {
+            total: sessionsArray.length,
+            sample: sessionsArray.slice(0, 2).map(s => ({
+              id: s.id,
+              "Class ID": s["Class ID"],
+              "Teacher ID": s["Teacher ID"],
+              "Giáo viên": s["Giáo viên"],
+              "Trạng thái": s["Trạng thái"],
+              "Ngày": s["Ngày"],
+            }))
+          });
+          setAttendanceSessions(sessionsArray);
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error("❌ Error loading initial sessions:", error);
         setLoading(false);
       }
-    }).catch((error) => {
-      console.error("❌ Error loading initial sessions:", error);
-      setLoading(false);
-    });
+    };
+
+    loadInitial();
     
     // Then set up realtime listener for future updates
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
-        const sessionsArray = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
+        const sessionsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         console.log("🔄 Attendance sessions realtime update:", {
           total: sessionsArray.length,
           timestamp: new Date().toISOString(),
@@ -317,8 +328,6 @@ const TeacherListView: React.FC = () => {
         console.log("⚠️ No attendance sessions found");
         setAttendanceSessions([]);
       }
-    }, (error) => {
-      console.error("❌ Error listening to attendance sessions:", error);
     });
     
     return () => {
@@ -397,37 +406,21 @@ const TeacherListView: React.FC = () => {
   useEffect(() => {
     console.log("🎯 Setting up realtime listener for classes...");
     
-    // Force load initial data immediately
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    get(classesRef).then((snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const classesArray = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
-        console.log("📚 Initial classes loaded:", classesArray.length);
-        setClasses(classesArray);
-      }
-    }).catch((error) => {
-      console.error("❌ Error loading initial classes:", error);
-    });
-    
-    // Then set up realtime listener for future updates
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const classesArray = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
+    // Set up realtime listener for classes
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
+      if (data && typeof data === "object") {
+        const classesArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "lop_hoc");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
         setClasses(classesArray);
         console.log("✅ Classes realtime update:", classesArray.length);
       } else {
         setClasses([]);
       }
-    }, (error) => {
-      console.error("Error listening to classes:", error);
     });
     
     return () => unsubscribe();

@@ -25,8 +25,9 @@ import {
 import { useClasses } from "../../hooks/useClasses";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class } from "../../types";
-import { ref, onValue, update } from "firebase/database";
+import { ref, onValue, get, update } from "firebase/database";
 import { database } from "../../firebase";
+import { supabaseOnValue, supabaseUpdate, convertFromSupabaseFormat } from "../../utils/supabaseHelpers";
 import { useNavigate } from "react-router-dom";
 import AddStudentModal from "../AddStudentModal";
 import ScoreDetailModal from "../ScoreDetailModal";
@@ -66,9 +67,7 @@ const TeacherClassView = () => {
   useEffect(() => {
     if (!userProfile?.email) return;
 
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
       if (data) {
         const teacherEntry = Object.entries(data).find(
           ([_, teacher]: [string, any]) =>
@@ -86,14 +85,15 @@ const TeacherClassView = () => {
   }, [userProfile?.email]);
 
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribe = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Danh_sách_học_sinh", (data) => {
       if (data) {
-        const studentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
+        const studentList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id,
+            ...converted,
+          };
+        });
         setStudents(studentList);
       }
     });
@@ -102,14 +102,15 @@ const TeacherClassView = () => {
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
-        const sessionsList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as any),
-        }));
+        const sessionsList = Object.entries(data).map(([id, value]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id,
+            ...converted,
+          };
+        });
         setAttendanceSessions(sessionsList);
       }
     });
@@ -160,16 +161,16 @@ const TeacherClassView = () => {
     if (!selectedClassForDoc) return;
 
     try {
-      const classRef = ref(
-        database,
-        `datasheet/Lớp_học/${selectedClassForDoc.id}`
-      );
       const currentDocuments = selectedClassForDoc["Tài liệu"] || [];
       const updatedDocuments = [...currentDocuments, documentData];
 
-      await update(classRef, {
-        "Tài liệu": updatedDocuments,
-      });
+      await supabaseUpdate(
+        "datasheet/Lớp_học",
+        selectedClassForDoc.id,
+        {
+          "Tài liệu": updatedDocuments,
+        }
+      );
     } catch (error) {
       console.error("Error adding document to class:", error);
       message.error("Lỗi khi lưu tài liệu vào lớp học");

@@ -12,6 +12,7 @@ interface MigrationProgress {
   students: { total: number; migrated: number };
   classes: { total: number; migrated: number };
   sessions: { total: number; migrated: number };
+  timetable: { total: number; migrated: number };
   customScores: { total: number; migrated: number };
 }
 
@@ -21,6 +22,7 @@ const ReportMigrationPage = () => {
     students: { total: 0, migrated: 0 },
     classes: { total: 0, migrated: 0 },
     sessions: { total: 0, migrated: 0 },
+    timetable: { total: 0, migrated: 0 },
     customScores: { total: 0, migrated: 0 },
   });
 
@@ -250,6 +252,60 @@ const ReportMigrationPage = () => {
     }
   };
 
+  // Migrate custom timetable
+  const migrateTimetable = async () => {
+    try {
+      const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
+      const snapshot = await get(timetableRef);
+      const data = snapshot.val();
+
+      if (!data) {
+        message.warning("Không có dữ liệu thời khoá biểu tùy chỉnh trong Firebase");
+        return;
+      }
+
+      const timetableEntries = Object.entries(data).map(([id, value]) => ({ id, ...(value as any) }));
+      setProgress((prev) => ({ ...prev, timetable: { total: timetableEntries.length, migrated: 0 } }));
+
+      let migrated = 0;
+      for (const entry of timetableEntries) {
+        try {
+          const supabaseData = {
+            id: entry.id,
+            class_id: entry["Class ID"] || null,
+            ma_lop: entry["Mã lớp"] || null,
+            ten_lop: entry["Tên lớp"] || null,
+            ngay: entry["Ngày"] || null,
+            thu: entry["Thứ"] || null,
+            gio_bat_dau: entry["Giờ bắt đầu"] || null,
+            gio_ket_thuc: entry["Giờ kết thúc"] || null,
+            phong_hoc: entry["Phòng học"] || null,
+            ghi_chu: entry["Ghi chú"] || null,
+            thay_the_ngay: entry["Thay thế ngày"] || null,
+            thay_the_thu: entry["Thay thế thứ"] || null,
+            teacher_id: entry["Teacher ID"] || null,
+            giao_vien: entry["Giáo viên"] || null,
+            timestamp: entry["Timestamp"] || null,
+          };
+
+          await supabaseSet("datasheet/Thời_khoá_biểu", supabaseData, { upsert: true, onConflict: "id" });
+          migrated++;
+          setProgress((prev) => ({
+            ...prev,
+            timetable: { ...prev.timetable, migrated },
+          }));
+        } catch (error: any) {
+          console.error(`Error migrating timetable entry ${entry.id}:`, error);
+        }
+      }
+
+      message.success(`Đã chuyển ${migrated}/${timetableEntries.length} lịch học tùy chỉnh sang Supabase`);
+    } catch (error: any) {
+      console.error("Error migrating timetable:", error);
+      message.error(`Lỗi khi chuyển thời khoá biểu tùy chỉnh: ${error.message}`);
+    }
+  };
+
   // Migrate all
   const migrateAll = async () => {
     setMigrating(true);
@@ -257,6 +313,7 @@ const ReportMigrationPage = () => {
       students: { total: 0, migrated: 0 },
       classes: { total: 0, migrated: 0 },
       sessions: { total: 0, migrated: 0 },
+      timetable: { total: 0, migrated: 0 },
       customScores: { total: 0, migrated: 0 },
     });
 
@@ -264,6 +321,7 @@ const ReportMigrationPage = () => {
       await migrateStudents();
       await migrateClasses();
       await migrateSessions();
+      await migrateTimetable();
       await migrateCustomScores();
       message.success("✅ Hoàn thành chuyển đổi tất cả dữ liệu!");
     } catch (error: any) {
@@ -376,6 +434,29 @@ const ReportMigrationPage = () => {
                 icon={<DatabaseOutlined />}
               >
                 Chuyển Điểm Tự Nhập
+              </Button>
+            </Space>
+          </Card>
+
+          {/* Timetable */}
+          <Card>
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Text strong>Lịch học tùy chỉnh (Thời_khoá_biểu)</Text>
+              <Progress
+                percent={
+                  progress.timetable.total > 0
+                    ? Math.round((progress.timetable.migrated / progress.timetable.total) * 100)
+                    : 0
+                }
+                status={progress.timetable.migrated === progress.timetable.total && progress.timetable.total > 0 ? "success" : "active"}
+                format={() => `${progress.timetable.migrated}/${progress.timetable.total}`}
+              />
+              <Button
+                onClick={migrateTimetable}
+                disabled={migrating}
+                icon={<DatabaseOutlined />}
+              >
+                Chuyển Lịch Học Tùy Chỉnh
               </Button>
             </Space>
           </Card>

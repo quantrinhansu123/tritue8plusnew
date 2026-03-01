@@ -32,9 +32,10 @@ import {
   WarningOutlined,
   EyeOutlined,
 } from "@ant-design/icons";
-import { ref, onValue, update, push } from "firebase/database";
-import { database } from "../../firebase";
+import { supabaseOnValue, supabaseSet, supabaseUpdate, convertFromSupabaseFormat, generateFirebaseId } from "../../utils/supabaseHelpers";
 import { useAuth } from "../../contexts/AuthContext";
+import { ref, onValue, push, set, remove, get, update } from "firebase/database";
+import { database } from "../../firebase";
 import { Class, AttendanceSession, MonthlyComment, MonthlyReportStats, ClassStats } from "../../types";
 import { generateStudentComment, StudentReportData } from "../../utils/geminiService";
 import TeacherCommentEditModal from "../TeacherCommentEditModal";
@@ -108,9 +109,7 @@ const TeacherMonthlyReport = () => {
   useEffect(() => {
     if (!userProfile?.email) return;
 
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
       if (data) {
         const teacherEntry = Object.entries(data).find(
           ([_, teacher]: [string, any]) =>
@@ -133,15 +132,16 @@ const TeacherMonthlyReport = () => {
   useEffect(() => {
     if (!actualTeacherId) return;
 
-    const classesRef = ref(database, "datasheet/Lớp_học");
-    const unsubscribe = onValue(classesRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data) {
         const classList = Object.entries(data)
-          .map(([id, value]) => ({
-            id,
-            ...(value as Omit<Class, "id">),
-          }))
+          .map(([id, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lop_hoc");
+            return {
+              id,
+              ...converted,
+            };
+          })
           .filter((c) => c["Teacher ID"] === actualTeacherId && c["Trạng thái"] === "active");
         
         setClasses(classList);
@@ -152,14 +152,15 @@ const TeacherMonthlyReport = () => {
 
   // Load students
   useEffect(() => {
-    const studentsRef = ref(database, "datasheet/Danh_sách_học_sinh");
-    const unsubscribe = onValue(studentsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Danh_sách_học_sinh", (data) => {
       if (data) {
-        const studentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<Student, "id">),
-        }));
+        const studentList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return {
+            id,
+            ...converted,
+          };
+        });
         setStudents(studentList);
       }
     });
@@ -168,14 +169,15 @@ const TeacherMonthlyReport = () => {
 
   // Load attendance sessions
   useEffect(() => {
-    const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
-    const unsubscribe = onValue(sessionsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
-        const sessionList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<AttendanceSession, "id">),
-        }));
+        const sessionList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id,
+            ...converted,
+          } as AttendanceSession;
+        });
         setSessions(sessionList);
       }
     });
@@ -184,14 +186,15 @@ const TeacherMonthlyReport = () => {
 
   // Load existing monthly comments
   useEffect(() => {
-    const commentsRef = ref(database, "datasheet/Nhận_xét_tháng");
-    const unsubscribe = onValue(commentsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Nhận_xét_tháng", (data) => {
       if (data) {
-        const commentList = Object.entries(data).map(([id, value]) => ({
-          id,
-          ...(value as Omit<MonthlyComment, "id">),
-        }));
+        const commentList = Object.entries(data).map(([id, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "nhan_xet_thang");
+          return {
+            id,
+            ...converted,
+          };
+        });
         setExistingComments(commentList);
       } else {
         setExistingComments([]);
@@ -204,17 +207,16 @@ const TeacherMonthlyReport = () => {
   useEffect(() => {
     if (classes.length === 0) return;
 
-    const customScoresRef = ref(database, "datasheet/Điểm_tự_nhập");
-    const unsubscribe = onValue(customScoresRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_tự_nhập", (data) => {
       if (data) {
         // Filter only classes that belong to this teacher
         const teacherClassIds = classes.map(c => c.id);
         const filteredData: { [classId: string]: any } = {};
         
-        Object.entries(data).forEach(([classId, classScores]) => {
+        Object.entries(data).forEach(([classId, classScores]: [string, any]) => {
           if (teacherClassIds.includes(classId)) {
-            filteredData[classId] = classScores;
+            const converted = convertFromSupabaseFormat(classScores, "diem_tu_nhap");
+            filteredData[classId] = converted;
           }
         });
         
@@ -720,13 +722,13 @@ const TeacherMonthlyReport = () => {
         };
 
         if (row.existingCommentId) {
-          await update(ref(database, `datasheet/Nhận_xét_tháng/${row.existingCommentId}`), {
+          await supabaseUpdate("datasheet/Nhận_xét_tháng", row.existingCommentId, {
             ...commentData,
             updatedAt: new Date().toISOString(),
           });
         } else {
-          const newRef = push(ref(database, "datasheet/Nhận_xét_tháng"));
-          await update(newRef, commentData);
+          const newId = generateFirebaseId();
+          await supabaseSet("datasheet/Nhận_xét_tháng", { ...commentData, id: newId });
         }
       }
 
@@ -790,13 +792,13 @@ const TeacherMonthlyReport = () => {
         };
 
         if (row.existingCommentId) {
-          await update(ref(database, `datasheet/Nhận_xét_tháng/${row.existingCommentId}`), {
+          await supabaseUpdate("datasheet/Nhận_xét_tháng", row.existingCommentId, {
             ...commentData,
             updatedAt: new Date().toISOString(),
           });
         } else {
-          const newRef = push(ref(database, "datasheet/Nhận_xét_tháng"));
-          await update(newRef, commentData);
+          const newId = generateFirebaseId();
+          await supabaseSet("datasheet/Nhận_xét_tháng", { ...commentData, id: newId });
         }
 
         submittedCount++;
@@ -999,13 +1001,13 @@ const TeacherMonthlyReport = () => {
       };
 
       if (row.existingCommentId) {
-        await update(ref(database, `datasheet/Nhận_xét_tháng/${row.existingCommentId}`), {
+        await supabaseUpdate("datasheet/Nhận_xét_tháng", row.existingCommentId, {
           ...commentData,
           updatedAt: new Date().toISOString(),
         });
       } else {
-        const newRef = push(ref(database, "datasheet/Nhận_xét_tháng"));
-        await update(newRef, commentData);
+        const newId = generateFirebaseId();
+        await supabaseSet("datasheet/Nhận_xét_tháng", { ...commentData, id: newId });
       }
 
       message.success(`Đã gửi báo cáo của ${row.studentName} cho Admin duyệt!`);

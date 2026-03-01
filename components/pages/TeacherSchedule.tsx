@@ -33,6 +33,13 @@ import { useAuth } from "../../contexts/AuthContext";
 import { Class, ClassSchedule } from "../../types";
 import { ref, onValue, push, set, remove, update } from "firebase/database";
 import { database } from "../../firebase";
+import {
+  supabaseOnValue,
+  supabaseSet,
+  supabaseRemove,
+  convertFromSupabaseFormat,
+  generateFirebaseId,
+} from "../../utils/supabaseHelpers";
 import { useNavigate } from "react-router-dom";
 import dayjs, { Dayjs } from "dayjs";
 import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
@@ -158,13 +165,12 @@ const TeacherSchedule = () => {
 
   // Load rooms
   useEffect(() => {
-    const roomsRef = ref(database, "datasheet/Phòng_học");
-    const unsubscribe = onValue(roomsRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Phòng_học", (data) => {
       if (data) {
         const roomsMap = new Map();
         Object.entries(data).forEach(([id, room]: [string, any]) => {
-          roomsMap.set(id, room);
+          const converted = convertFromSupabaseFormat(room, "phong_hoc");
+          roomsMap.set(id, converted);
         });
         setRooms(roomsMap);
       }
@@ -174,14 +180,13 @@ const TeacherSchedule = () => {
 
   // Load timetable entries (lịch học bù)
   useEffect(() => {
-    const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-    const unsubscribe = onValue(timetableRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
+    const unsubscribe = supabaseOnValue("datasheet/Thời_khoá_biểu", (data) => {
+      if (data && typeof data === 'object') {
         const entriesMap = new Map<string, TimetableEntry>();
         Object.entries(data).forEach(([id, value]: [string, any]) => {
-          const key = `${value["Class ID"]}_${value["Ngày"]}_${value["Thứ"]}`;
-          entriesMap.set(key, { id, ...value });
+          const converted = convertFromSupabaseFormat(value, "thoi_khoa_bieu");
+          const key = `${converted["Class ID"]}_${converted["Ngày"]}_${converted["Thứ"]}`;
+          entriesMap.set(key, { id, ...converted });
         });
         setTimetableEntries(entriesMap);
       } else {
@@ -208,9 +213,7 @@ const TeacherSchedule = () => {
   useEffect(() => {
     if (!userProfile?.email) return;
 
-    const teachersRef = ref(database, "datasheet/Giáo_viên");
-    const unsubscribe = onValue(teachersRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
       if (data) {
         const teacherEntry = Object.entries(data).find(
           ([_, teacher]: [string, any]) =>
@@ -743,14 +746,13 @@ const TeacherSchedule = () => {
           (timetableData as any)["Thay thế thứ"] = existingEntry["Thay thế thứ"];
         }
 
-        // Xóa entry cũ và tạo mới
-        const oldEntryRef = ref(database, `datasheet/Thời_khoá_biểu/${event.scheduleId}`);
-        await remove(oldEntryRef);
+        // Xóa entry cũ
+        await supabaseRemove("datasheet/Thời_khoá_biểu", event.scheduleId);
       }
 
-      const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-      const newEntryRef = push(timetableRef);
-      await set(newEntryRef, timetableData);
+      // Tạo entry mới
+      const newId = generateFirebaseId();
+      await supabaseSet("datasheet/Thời_khoá_biểu", { id: newId, ...timetableData }, { upsert: true, onConflict: "id" });
 
       message.success(`Đã di chuyển lịch từ ${oldDateStr} sang ${newDateStr}`);
     } catch (error) {
@@ -814,8 +816,7 @@ const TeacherSchedule = () => {
       });
       
       for (const entryId of entriesToDelete) {
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${entryId}`);
-        await remove(entryRef);
+        await supabaseRemove("datasheet/Thời_khoá_biểu", entryId);
       }
       
       message.success("Đã cập nhật lịch cho tất cả các tuần");
@@ -849,14 +850,12 @@ const TeacherSchedule = () => {
 
       if (event.scheduleId) {
         // Cập nhật lịch bù hiện có
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${event.scheduleId}`);
-        await set(entryRef, timetableData);
+        await supabaseSet("datasheet/Thời_khoá_biểu", { id: event.scheduleId, ...timetableData }, { upsert: true, onConflict: "id" });
         message.success("Đã cập nhật lịch học bù");
       } else {
         // Tạo lịch bù mới
-        const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-        const newEntryRef = push(timetableRef);
-        await set(newEntryRef, timetableData);
+        const newId = generateFirebaseId();
+        await supabaseSet("datasheet/Thời_khoá_biểu", { id: newId, ...timetableData }, { upsert: true, onConflict: "id" });
         message.success("Đã tạo lịch học bù cho ngày này");
       }
 
@@ -910,8 +909,7 @@ const TeacherSchedule = () => {
     }
 
     try {
-      const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${editingEvent.scheduleId}`);
-      await remove(entryRef);
+      await supabaseRemove("datasheet/Thời_khoá_biểu", editingEvent.scheduleId);
       message.success("Đã xóa lịch học bù");
       setIsEditModalOpen(false);
       setEditingEvent(null);
