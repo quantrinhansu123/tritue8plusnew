@@ -471,8 +471,10 @@ const AttendanceSessionPage = () => {
                 // Xóa invoice hoàn toàn nếu không còn session nào
                 upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key).then(() => {}));
               } else {
+                // Lấy giá từ hoc_phi_rieng hoặc giữ nguyên giá cũ nếu có
+                const currentPrice = existing.pricePerSession || getPricePerSession(studentId, currentClassId);
                 // Cập nhật invoice với số buổi mới (giảm total_sessions và total_amount)
-                const newTotalAmount = pricePerSession * filteredSessions.length;
+                const newTotalAmount = currentPrice * filteredSessions.length;
                 const updatedInvoice = {
                   id: key,
                   studentId: existing.studentId || studentId,
@@ -485,7 +487,7 @@ const AttendanceSessionPage = () => {
                   month: existing.month || targetMonth + 1,
                   year: existing.year || targetYear,
                   totalSessions: filteredSessions.length, // Giảm số buổi
-                  pricePerSession: existing.pricePerSession || pricePerSession,
+                  pricePerSession: currentPrice,
                   totalAmount: newTotalAmount, // Cập nhật total_amount
                   discount: existing.discount || 0,
                   finalAmount: Math.max(0, newTotalAmount - (existing.discount || 0)),
