@@ -5,7 +5,7 @@ import { Form, Input, Button, Alert, Tabs } from "antd";
 import { UserOutlined, LockOutlined, IdcardOutlined } from "@ant-design/icons";
 
 const Login: React.FC = () => {
-  const { signInWithTeacherCredentials, signInWithParentCredentials } = useAuth();
+  const { signInWithEmail, signInWithParentCredentials } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -22,7 +22,7 @@ const Login: React.FC = () => {
 
     try {
       setLoading(true);
-      await signInWithTeacherCredentials(email.trim(), password);
+      await signInWithEmail(email.trim(), password);
       setSuccess("Đăng nhập thành công! Chuyển hướng...");
       // Get the redirect path from location state, or default to /workspace
       const from = (location.state as any)?.from?.pathname || "/workspace";
@@ -82,7 +82,7 @@ const Login: React.FC = () => {
   }, [currentUser, userProfile, navigate, location.pathname, authLoading]);
 
   return (
-    <div 
+    <div
       className="min-h-screen flex items-center justify-center p-4 relative"
       style={{
         backgroundImage: 'url(/img/banner.png)',
@@ -93,14 +93,14 @@ const Login: React.FC = () => {
       }}
     >
       {/* Overlay mờ chuyên nghiệp */}
-      <div 
+      <div
         className="absolute inset-0"
         style={{
           backgroundColor: 'rgba(0, 0, 0, 0.35)',
           backdropFilter: 'blur(6px)',
         }}
       />
-      
+
       {/* Nội dung chính */}
       <div className="max-w-md w-full relative z-10">
         {/* Logo and Title */}
@@ -132,7 +132,7 @@ const Login: React.FC = () => {
         </div>
 
         {/* Login Card */}
-        <div 
+        <div
           className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 border-2 border-[#36797f]"
           style={{
             backgroundColor: 'rgba(255, 255, 255, 0.95)',

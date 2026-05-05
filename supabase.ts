@@ -1,9 +1,9 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 // Supabase configuration
-const SUPABASE_URL = "https://mldlabfnewfgygpadfka.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1sZGxhYmZuZXdmZ3lncGFkZmthIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEwNjc0NzcsImV4cCI6MjA4NjY0MzQ3N30.8ifnsiZvRxeTQ6DUyXegy5uHXMPAKhlPV6Y6zeUBROI";
-const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1sZGxhYmZuZXdmZ3lncGFkZmthIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MTA2NzQ3NywiZXhwIjoyMDg2NjQzNDc3fQ.x9xGSJ5Y4xBOfdJpcG_EQ_If4Bi21SX5WNNCPWJyGS0";
+const SUPABASE_URL = "https://fwulklijfntedslwiryj.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3dWxrbGlqZm50ZWRzbHdpcnlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5ODcxNzksImV4cCI6MjA5MzU2MzE3OX0.KjFpRIYEYDxU4h7iRHu11Y8pH1RNLIZ00nhGWad_0II-";
+const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3dWxrbGlqZm50ZWRzbHdpcnlqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Nzk4NzE3OSwiZXhwIjoyMDkzNTYzMTc5fQ.T3-jGK5N0HTYPt3HoBekenoAg5hI3JmJJqkaW3HZSPQ";
 
 // Create Supabase client with anon key (for client-side operations)
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -40,11 +40,11 @@ export const getTableName = (firebasePath: string): string => {
   // If path contains an ID (e.g., "datasheet/Học_sinh/-OgBnlEHOk4DQEkPfRdU")
   // Extract the table name part (before the ID)
   const parts = firebasePath.split("/");
-  
+
   // Check if last part looks like an ID (starts with - or is a long alphanumeric string)
   const lastPart = parts[parts.length - 1];
   const isId = lastPart.startsWith("-") || lastPart.length > 20 || /^[a-zA-Z0-9_-]{20,}$/.test(lastPart);
-  
+
   if (isId && parts.length >= 2) {
     // Remove the ID part and try to match the table path
     const tablePath = parts.slice(0, -1).join("/");
@@ -55,7 +55,7 @@ export const getTableName = (firebasePath: string): string => {
 
   // Try to extract table name from path (use second-to-last if last looks like ID)
   const tableName = isId && parts.length >= 2 ? parts[parts.length - 2] : lastPart;
-  
+
   // Convert Vietnamese to non-accented and lowercase
   return tableName
     .normalize("NFD")
