@@ -385,11 +385,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                   if (teacherEntry) {
                     const [_, teacherData] = teacherEntry as [string, any];
                     const isActuallyAdmin = teacherData.vi_tri === "Admin" || teacherData["Vị trí"] === "Admin" || isAdmin(storedProfile.email);
-                    const correctRole = isActuallyAdmin ? "admin" : "teacher";
+                    const correctRole: UserRole = isActuallyAdmin ? "admin" : "teacher";
                     
                     if (storedProfile.isAdmin !== isActuallyAdmin || storedProfile.role !== correctRole) {
                       console.warn("⚠️ Permission mismatch detected! Auto-fixing profile.");
-                      const updatedProfile = {
+                      const updatedProfile: UserProfile = {
                         ...storedProfile,
                         isAdmin: isActuallyAdmin,
                         role: correctRole

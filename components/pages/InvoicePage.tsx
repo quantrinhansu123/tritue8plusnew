@@ -144,6 +144,13 @@ interface GroupedStudentInvoice {
   discount: number; // Total discount
   finalAmount: number; // Total final amount
   status: "paid" | "unpaid"; // "paid" only if all invoices are paid
+  // Optional fields used by "paid" upsert shortcut (typically from first invoice)
+  debt?: number;
+  classId?: string;
+  className?: string;
+  classCode?: string;
+  subject?: string;
+  pricePerSession?: number;
 }
 
 interface TeacherSalary {
@@ -163,6 +170,7 @@ interface TeacherSalary {
   status: "paid" | "unpaid";
   sessions: AttendanceSession[];
   invoiceImage?: string; // Base64 image data
+  sessionSalaries?: { [sessionId: string]: number }; // Custom salaries per session
 }
 
 const InvoicePage = () => {
