@@ -17,6 +17,26 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
+const missingFirebaseEnvKeys = [
+  "VITE_FIREBASE_API_KEY",
+  "VITE_FIREBASE_AUTH_DOMAIN",
+  "VITE_FIREBASE_DATABASE_URL",
+  "VITE_FIREBASE_PROJECT_ID",
+  "VITE_FIREBASE_STORAGE_BUCKET",
+  "VITE_FIREBASE_MESSAGING_SENDER_ID",
+  "VITE_FIREBASE_APP_ID",
+].filter((k) => !(import.meta as any).env?.[k]);
+
+if (missingFirebaseEnvKeys.length) {
+  // Fail fast with a clear error instead of Firebase throwing auth/invalid-api-key later.
+  const msg =
+    `[Firebase] Missing environment variables: ${missingFirebaseEnvKeys.join(", ")}. ` +
+    `Create ".env.local" (copy from ".env.example") and fill your Firebase web config.`;
+  // eslint-disable-next-line no-console
+  console.error(msg);
+  throw new Error(msg);
+}
+
 // Export DATABASE_URL từ config (dùng cho scripts và REST API calls)
 export const DATABASE_URL_BASE = firebaseConfig.databaseURL;
 
