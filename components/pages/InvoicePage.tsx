@@ -6,10 +6,12 @@ import {
   supabaseGetByStudentMonthYear,
   supabaseSet,
   supabaseUpdate,
+  supabaseUpdateMany,
   supabaseRemove,
   supabaseOnValue,
   convertFromSupabaseFormat,
   convertToSupabaseFormat,
+  generateFirebaseId,
 } from "@/utils/supabaseHelpers";
 import { subjectMap, subjectOptions } from "@/utils/selectOptions";
 import {
@@ -367,7 +369,9 @@ const InvoicePage = () => {
         const invoiceMap: Record<string, any> = {};
         Object.entries(data).forEach(([id, invoice]: [string, any]) => {
           const studentId = invoice.studentId || invoice.student_id || "";
-          const month = invoice.month !== undefined ? invoice.month : 0;
+          let month = invoice.month !== undefined ? invoice.month : 0;
+          // Convert 1-12 (DB) to 0-11 (JS)
+          if (month >= 1 && month <= 12) month -= 1;
           const year = invoice.year !== undefined ? invoice.year : 0;
           
           // QUAN TRỌNG: Lấy status trực tiếp từ cột status trong database
@@ -419,7 +423,20 @@ const InvoicePage = () => {
 
         const unsubscribeTeachers = supabaseOnValue("datasheet/Phiếu_lương_giáo_viên", (data) => {
       if (data) {
-        setTeacherSalaryStatus(data);
+        // Convert month from 1-12 to 0-11 for teacher salary status
+        const convertedData: Record<string, any> = {};
+        Object.entries(data).forEach(([key, val]: [string, any]) => {
+          if (val && typeof val === "object" && val.month !== undefined) {
+            const dbMonth = val.month;
+            convertedData[key] = {
+              ...val,
+              month: (dbMonth >= 1 && dbMonth <= 12) ? dbMonth - 1 : dbMonth
+            };
+          } else {
+            convertedData[key] = val;
+          }
+        });
+        setTeacherSalaryStatus(convertedData);
       }
     });
 
@@ -467,24 +484,56 @@ const InvoicePage = () => {
           setStudents(studentsArray);
         }
 
-        // Bảng giao_vien chưa tồn tại trong Supabase - bỏ qua để tránh lỗi 404
-        setTeachers([]);
+        // Fetch teachers from Supabase
+        const teachersData = await supabaseGetAll("datasheet/Giáo_viên");
+        if (teachersData && typeof teachersData === "object") {
+          const teachersArray = Object.entries(teachersData).map(
+            ([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "giao_vien");
+              return {
+                id: key,
+                ...converted,
+              };
+            }
+          );
+          setTeachers(teachersArray);
+        } else {
+          setTeachers([]);
+        }
 
         // Fetch attendance sessions from Supabase
         const sessionsData = await supabaseGetAll("datasheet/Điểm_danh_sessions");
-        if (sessionsData && typeof sessionsData === 'object') {
-          const sessionsArray = Object.entries(sessionsData).map(([key, value]: [string, any]) => {
-            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
-            return {
-              id: key,
-              ...converted,
-            };
-          });
+        if (sessionsData && typeof sessionsData === "object") {
+          const sessionsArray = Object.entries(sessionsData).map(
+            ([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+              return {
+                id: key,
+                ...converted,
+              };
+            }
+          );
           setSessions(sessionsArray);
+        } else {
+          setSessions([]);
         }
 
-        // Bảng khoa_hoc chưa tồn tại trong Supabase - bỏ qua để tránh lỗi 404
-        setCourses([]);
+        // Fetch courses from Supabase (if exists)
+        const coursesData = await supabaseGetAll("datasheet/Khóa_học");
+        if (coursesData && typeof coursesData === "object") {
+          const coursesArray = Object.entries(coursesData).map(
+            ([key, value]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(value, "khoa_hoc");
+              return {
+                id: key,
+                ...converted,
+              };
+            }
+          );
+          setCourses(coursesArray);
+        } else {
+          setCourses([]);
+        }
 
         // Fetch classes from Supabase
         const classesData = await supabaseGetAll("datasheet/Lớp_học");
@@ -876,7 +925,7 @@ const InvoicePage = () => {
             teacherName: data.teacherName || "",
             teacherCode: data.teacherCode || "",
             bienChe: data.bienChe || "Chưa phân loại",
-            month: data.month ?? 0,
+            month: (data.month !== undefined && data.month >= 1) ? data.month - 1 : 0,
             year: data.year ?? 0,
             totalSessions: data.totalSessions ?? 0,
             salaryPerSession: data.salaryPerSession ?? 0,
@@ -1133,7 +1182,7 @@ const InvoicePage = () => {
           const invStudentId = inv.studentId || "";
           const invMonth = inv.month ?? 0;
           const invYear = inv.year ?? 0;
-          return invStudentId === invoice.studentId && invMonth === dbMonth && invYear === invoice.year;
+          return invStudentId === invoice.studentId && invMonth === invoice.month && invYear === invoice.year;
         });
         
         if (matchingInvoice && typeof matchingInvoice === "object" && matchingInvoice.status) {
@@ -1208,8 +1257,8 @@ const InvoicePage = () => {
       const year = invoiceData.year ?? 0;
       const status = invoiceData.status || "unpaid";
 
-      // Convert DB month (1-12) sang JS month (0-11) để so sánh
-      const jsMonth = month > 0 ? month - 1 : 0;
+      // Month đã là JS month (0-11) từ studentInvoiceStatus
+      const jsMonth = month;
       
       // Chỉ lấy invoices matching selected month/year và status = "paid"
       if (jsMonth !== studentMonth || year !== studentYear) return;
@@ -1339,7 +1388,7 @@ const InvoicePage = () => {
     // selectedRowKeys ở tab chưa thanh toán là studentId (do bảng group theo học sinh)
     const groupedByStudent = new Map(groupedStudentInvoices.map((g) => [g.studentId, g]));
 
-    Modal.confirm({
+    modal.confirm({
       title: "Xác nhận xóa",
       content: `Bạn có chắc chắn muốn xóa ${selectedRowKeys.length} phiếu thu đã chọn? Dữ liệu sẽ bị xóa vĩnh viễn.`,
       okText: "Xóa",
@@ -1401,7 +1450,7 @@ const InvoicePage = () => {
       return;
     }
 
-    Modal.confirm({
+    modal.confirm({
       title: "Xác nhận xóa",
       content: `Bạn có chắc chắn muốn xóa ${selectedPaidRowKeys.length} phiếu thu đã thanh toán đã chọn? Dữ liệu sẽ bị xóa vĩnh viễn.`,
       okText: "Xóa",
@@ -1739,7 +1788,7 @@ const InvoicePage = () => {
 
   // Reset và tạo lại TẤT CẢ invoice từ dữ liệu điểm danh
   const resetAllInvoicesFromSessions = async () => {
-    Modal.confirm({
+    modal.confirm({
       title: "Xác nhận reset toàn bộ invoice",
       content: `Bạn có chắc chắn muốn RESET và tạo lại TẤT CẢ invoice từ dữ liệu điểm danh?\n\nHành động này sẽ:\n- Xóa TẤT CẢ invoice (cả đã thanh toán và chưa thanh toán)\n- Tạo lại invoice từ dữ liệu điểm danh\n- Tự động tính công nợ cho từng invoice\n\n⚠️ CẢNH BÁO: Dữ liệu invoice hiện tại sẽ bị XÓA VĨNH VIỄN!`,
       okText: "Reset tất cả",
@@ -2159,7 +2208,7 @@ const InvoicePage = () => {
 
   // Sync invoices for a specific month/year from attendance sessions
   const syncInvoicesForMonth = async (targetMonth: number, targetYear: number) => {
-    Modal.confirm({
+    modal.confirm({
       title: "Xác nhận đồng bộ invoice",
       content: `Bạn có chắc chắn muốn đồng bộ lại invoice tháng ${targetMonth}/${targetYear} từ dữ liệu điểm danh?\n\nHành động này sẽ:\n- Xóa các invoice chưa thanh toán của tháng này\n- Tạo lại invoice từ dữ liệu điểm danh\n- Giữ nguyên các invoice đã thanh toán\n\n⚠️ Lưu ý: Các invoice chưa thanh toán sẽ bị xóa và tạo lại!`,
       okText: "Đồng bộ",
@@ -2381,7 +2430,7 @@ const InvoicePage = () => {
 
   // Delete all data for a specific month/year (invoices and sessions)
   const handleDeleteAllDataForMonth = async (targetMonth: number, targetYear: number) => {
-    Modal.confirm({
+    modal.confirm({
       title: "Xác nhận xóa toàn bộ dữ liệu",
       content: `Bạn có chắc chắn muốn xóa TẤT CẢ dữ liệu tháng ${targetMonth + 1}/${targetYear}?\n\nBao gồm:\n- Tất cả phiếu thu (đã thanh toán và chưa thanh toán)\n- Tất cả buổi điểm danh\n\nDữ liệu sẽ bị xóa VĨNH VIỄN và không thể khôi phục!`,
       okText: "Xóa tất cả",
@@ -2459,37 +2508,39 @@ const InvoicePage = () => {
   const handleRevertToUnpaid = async (invoiceId: string) => {
     try {
       const invoiceData = studentInvoiceStatus[invoiceId];
-      const studentId = typeof invoiceData === "object" && invoiceData !== null ? invoiceData.studentId : undefined;
-      const month = typeof invoiceData === "object" && invoiceData !== null ? invoiceData.month : undefined;
-      const year = typeof invoiceData === "object" && invoiceData !== null ? invoiceData.year : undefined;
+      if (!invoiceData || typeof invoiceData !== "object") {
+        message.error("Không tìm thấy thông tin để hoàn trả");
+        return;
+      }
 
-      const updateResult = await supabaseUpdate("datasheet/Phiếu_thu_học_phí", invoiceId, {
-        status: "unpaid",
-      });
+      const studentId = invoiceData.studentId;
+      const month = invoiceData.month; // Đây đã là DB month (1-12)
+      const year = invoiceData.year;
+
+      if (!studentId || !month || !year) {
+        message.error("Thông tin phiếu thu không đầy đủ");
+        return;
+      }
+
+      console.log(`🔄 Reverting invoice to unpaid for:`, { studentId, month, year });
+
+      // 1. Cập nhật bảng TỔNG
+      const updateResult = await supabaseUpdateMany(
+        "datasheet/Phiếu_thu_học_phí",
+        { student_id: studentId, month: month + 1, year },
+        { status: "unpaid", paid_at: null }
+      );
 
       if (!updateResult) {
-        throw new Error("Update invoice status failed");
+        throw new Error("Update phieu_thu_hoc_phi failed");
       }
 
-      if (studentId && typeof month === "number" && month > 0 && typeof year === "number" && year > 0) {
-        const detailInvoices = await supabaseGetByStudentMonthYear(
-          "datasheet/Phiếu_thu_học_phí_chi_tiết",
-          studentId,
-          month,
-          year
-        );
-
-        if (detailInvoices && Object.keys(detailInvoices).length > 0) {
-          await Promise.all(
-            Object.keys(detailInvoices).map((detailId) =>
-              supabaseUpdate("datasheet/Phiếu_thu_học_phí_chi_tiết", detailId, {
-                status: "unpaid",
-                paidAt: null,
-              })
-            )
-          );
-        }
-      }
+      // 2. Cập nhật bảng CHI TIẾT
+      await supabaseUpdateMany(
+        "datasheet/Phiếu_thu_học_phí_chi_tiết",
+        { student_id: studentId, month: month + 1, year },
+        { status: "unpaid", paid_at: null }
+      );
 
       setStudentInvoiceStatus((prev) => {
         const next = { ...prev };
@@ -2530,7 +2581,7 @@ const InvoicePage = () => {
     invoiceId: string,
     status: "paid" | "unpaid"
   ) => {
-    Modal.confirm({
+    modal.confirm({
       title:
         status === "paid" ? "Xác nhận thanh toán" : "Hủy xác nhận thanh toán",
       content:
@@ -2559,38 +2610,46 @@ const InvoicePage = () => {
           });
           
           // Tìm record trong bảng phieu_thu_hoc_phi theo student_id, month, year
-          const invoicesByStudentMonthYear = await supabaseGetByStudentMonthYear(
-            "datasheet/Phiếu_thu_học_phí",
-            invoice.studentId,
-            dbMonth,
-            invoice.year
-          );
+          // Nếu không có, supabaseSet sẽ thực hiện upsert dựa trên constraint (student_id, month, year)
+          console.log(`✅ [updateStudentInvoiceStatus] Upserting invoice to status: ${status}`);
           
-          if (!invoicesByStudentMonthYear || Object.keys(invoicesByStudentMonthYear).length === 0) {
-            message.warning(`Không tìm thấy phiếu thu để cập nhật. Vui lòng tạo phiếu thu trước.`);
-            return Promise.reject(new Error("Invoice not found"));
-          }
-          
-          // Lấy ID của record đầu tiên (theo constraint unique chỉ có 1 record)
-          const firstRecord = Object.values(invoicesByStudentMonthYear)[0];
-          const recordId = firstRecord?.id || Object.keys(invoicesByStudentMonthYear)[0];
-          
-          if (!recordId) {
-            message.error(`Không tìm thấy ID của phiếu thu`);
-            return Promise.reject(new Error("Invoice ID not found"));
-          }
-          
-          console.log(`✅ [updateStudentInvoiceStatus] Found invoice with id: ${recordId}, updating status to: ${status}`);
-          
-          // Update trực tiếp cột status
-          const updateResult = await supabaseUpdate("datasheet/Phiếu_thu_học_phí", recordId, { status });
+          // Chuẩn bị dữ liệu đầy đủ để lưu/cập nhật
+          const invoiceDataToSave = {
+            id: invoice.id,
+            student_id: invoice.studentId,
+            student_name: invoice.studentName,
+            student_code: invoice.studentCode,
+            month: dbMonth,
+            year: invoice.year,
+            total_sessions: invoice.totalSessions,
+            total_amount: invoice.totalAmount,
+            discount: invoice.discount || 0,
+            final_amount: invoice.finalAmount,
+            debt: invoice.debt || 0,
+            status: status,
+            paid_at: status === "paid" ? new Date().toISOString() : null,
+            class_id: invoice.classId,
+            class_name: invoice.className,
+            class_code: invoice.classCode,
+            subject: invoice.subject,
+            price_per_session: invoice.pricePerSession,
+          };
+
+          const updateResult = await supabaseSet("datasheet/Phiếu_thu_học_phí", invoiceDataToSave, { upsert: true });
           
           if (!updateResult) {
             message.error(`Lỗi khi cập nhật trạng thái cho phiếu thu`);
             return Promise.reject(new Error("Update failed"));
           }
+
+          // ĐỒNG BỘ: Cập nhật trạng thái cho tất cả các bản ghi chi tiết trong bảng phieu_thu_hoc_phi_chi_tiet
+          await supabaseUpdateMany(
+            "datasheet/Phiếu_thu_học_phí_chi_tiết",
+            { student_id: invoice.studentId, month: dbMonth, year: invoice.year },
+            { status: status, paid_at: status === "paid" ? new Date().toISOString() : null }
+          );
           
-          console.log(`✅ [updateStudentInvoiceStatus] Successfully updated invoice ${recordId} status to: ${status}`);
+          console.log(`✅ [updateStudentInvoiceStatus] Successfully upserted invoice status to: ${status} in both tables`);
 
           // QUAN TRỌNG: Update studentInvoiceStatus ngay lập tức với đúng recordId từ database
           // Tìm tất cả records trong studentInvoiceStatus có cùng student_id, month, year và update status
@@ -2606,8 +2665,8 @@ const InvoicePage = () => {
                 const dataMonth = data.month ?? 0;
                 const dataYear = data.year ?? 0;
                 
-                // Match theo student_id, month, year
-                if (dataStudentId === invoice.studentId && dataMonth === dbMonth && dataYear === invoice.year) {
+                // Match theo student_id, month (0-11), year
+                if (dataStudentId === invoice.studentId && dataMonth === invoice.month && dataYear === invoice.year) {
                   console.log(`🔄 [updateStudentInvoiceStatus] Updating studentInvoiceStatus for key: ${key}, status: ${status}`);
                   next[key] = {
                     ...data,
@@ -3312,7 +3371,7 @@ const InvoicePage = () => {
     salaryId: string,
     status: "paid" | "unpaid"
   ) => {
-    Modal.confirm({
+    modal.confirm({
       title:
         status === "paid" ? "Xác nhận thanh toán" : "Hủy xác nhận thanh toán",
       content:
@@ -3340,50 +3399,47 @@ const InvoicePage = () => {
             `datasheet/Phiếu_lương_giáo_viên/${salaryId}`
           );
 
-          // When marking as paid, save complete salary data
-          if (status === "paid") {
-            const teacher = teachers.find((t) => t.id === salary.teacherId);
-            await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, {
-              status,
-              teacherId: salary.teacherId,
-              teacherName: salary.teacherName,
-              teacherCode: salary.teacherCode,
-              bienChe: salary.bienChe,
-              month: salary.month,
-              year: salary.year,
-              totalSessions: salary.totalSessions,
-              salaryPerSession: salary.salaryPerSession,
-              totalSalary: salary.totalSalary,
-              totalAllowance: salary.totalAllowance,
-              totalHours: salary.totalHours,
-              totalMinutes: salary.totalMinutes,
-              paidAt: new Date().toISOString(),
-              bankInfo: {
-                bank: teacher?.["Ngân hàng"] || null,
-                accountNo: teacher?.STK || null,
-                accountName: teacher?.["Họ và tên"] || null,
-              },
-              sessions: salary.sessions.map((s) => ({
-                id: s.id,
-                Ngày: s["Ngày"],
-                "Giờ bắt đầu": s["Giờ bắt đầu"],
-                "Giờ kết thúc": s["Giờ kết thúc"],
-                "Tên lớp": s["Tên lớp"],
-                "Mã lớp": s["Mã lớp"],
-              })),
-            });
-          } else {
-            // Only allow unpaid if not yet marked as paid
-            await supabaseUpdate("datasheet/Phiếu_lương_giáo_viên", salaryId, { status });
+          // Use supabaseSet with upsert to handle both create and update
+          const salaryDataToSave = {
+            id: salary.id,
+            status: status,
+            teacher_id: salary.teacherId,
+            teacher_name: salary.teacherName,
+            teacher_code: salary.teacherCode,
+            month: salary.month,
+            year: salary.year,
+            total_sessions: salary.totalSessions,
+            salary_per_session: salary.salaryPerSession,
+            total_salary: salary.totalSalary,
+            total_allowance: salary.totalAllowance,
+            total_hours: salary.totalHours,
+            total_minutes: salary.totalMinutes,
+            paid_at: status === "paid" ? new Date().toISOString() : null,
+            session_salaries: salary.sessionSalaries || {},
+          };
+
+          const updateResult = await supabaseSet("datasheet/Phiếu_lương_giáo_viên", salaryDataToSave, { upsert: true });
+          
+          if (!updateResult) {
+            message.error(`Lỗi khi cập nhật trạng thái cho phiếu lương`);
+            return;
           }
+          
+          console.log(`✅ [updateTeacherSalaryStatus] Successfully upserted salary status to: ${status}`);
 
           console.log("✅ Firebase updated successfully");
 
           // Update local state to trigger re-render
           setTeacherSalaryStatus((prev) => ({
             ...prev,
-            [salaryId]: status,
+            [salaryId]: {
+              ...(typeof prev[salaryId] === "object" ? prev[salaryId] : salary),
+              status: status,
+              paidAt: status === "paid" ? new Date().toISOString() : null,
+            },
           }));
+
+          setRefreshTrigger((prev) => prev + 1);
 
           message.success(
             status === "paid"
@@ -3939,7 +3995,7 @@ const InvoicePage = () => {
   };
 
   const viewTeacherSalary = (salary: TeacherSalary) => {
-    const salaryModal = Modal.info({
+    const salaryModal = modal.info({
       title: `Phiếu lương giáo viên - ${salary.teacherName}`,
       width: 800,
       maskClosable: true,
@@ -7316,43 +7372,53 @@ const InvoicePage = () => {
                 icon={<CheckCircleOutlined />}
               onClick={() => {
                 // QUAN TRỌNG: Chỉ hiện popup xác nhận 1 lần cho tất cả invoices trong record
-                Modal.confirm({
+                modal.confirm({
                   title: "Xác nhận thanh toán",
                   content: `Bạn có chắc chắn muốn đánh dấu phiếu thu của ${record.studentName} (${record.studentCode}) đã thanh toán?`,
                   okText: "Xác nhận",
                   cancelText: "Hủy",
                   onOk: async () => {
                     try {
-                      // Tìm record trong bảng phieu_thu_hoc_phi theo student_id, month, year
-                      const dbMonth = record.month + 1; // Convert JS month (0-11) to DB month (1-12)
-                      const invoicesByStudentMonthYear = await supabaseGetByStudentMonthYear(
-                        "datasheet/Phiếu_thu_học_phí",
-                        record.studentId,
-                        dbMonth,
-                        record.year
-                      );
+                      // Sử dụng upsert để tạo mới nếu chưa có phiếu thu
+                      const dbMonth = record.month + 1;
+                      console.log(`✅ [Table Action] Upserting invoice to status: paid`);
                       
-                      if (!invoicesByStudentMonthYear || Object.keys(invoicesByStudentMonthYear).length === 0) {
-                        message.warning(`Không tìm thấy phiếu thu để cập nhật. Vui lòng tạo phiếu thu trước.`);
-                        return;
-                      }
-                      
-                      // Lấy ID của record đầu tiên (theo constraint unique chỉ có 1 record)
-                      const firstRecord = Object.values(invoicesByStudentMonthYear)[0];
-                      const recordId = firstRecord?.id || Object.keys(invoicesByStudentMonthYear)[0];
-                      
-                      if (!recordId) {
-                        message.error(`Không tìm thấy ID của phiếu thu`);
-                        return;
-                      }
-                      
-                      // Update trực tiếp cột status
-                      const updateResult = await supabaseUpdate("datasheet/Phiếu_thu_học_phí", recordId, { status: "paid" });
+                      const invoiceDataToSave = {
+                        id: generateFirebaseId(),
+                        student_id: record.studentId,
+                        student_name: record.studentName,
+                        student_code: record.studentCode,
+                        month: dbMonth,
+                        year: record.year,
+                        total_sessions: record.totalSessions,
+                        total_amount: record.totalAmount,
+                        discount: record.discount || 0,
+                        final_amount: record.finalAmount,
+                        debt: record.debt || 0,
+                        status: "paid",
+                        paid_at: new Date().toISOString(),
+                        class_id: record.classId,
+                        class_name: record.className,
+                        class_code: record.classCode,
+                        subject: record.subject,
+                        price_per_session: record.pricePerSession,
+                      };
+
+                      const updateResult = await supabaseSet("datasheet/Phiếu_thu_học_phí", invoiceDataToSave, { upsert: true });
                       
                       if (!updateResult) {
                         message.error(`Lỗi khi cập nhật trạng thái cho phiếu thu`);
                         return;
                       }
+
+                      // ĐỒNG BỘ: Cập nhật trạng thái cho tất cả các bản ghi chi tiết trong bảng phieu_thu_hoc_phi_chi_tiet
+                      await supabaseUpdateMany(
+                        "datasheet/Phiếu_thu_học_phí_chi_tiết",
+                        { student_id: record.studentId, month: dbMonth, year: record.year },
+                        { status: "paid", paid_at: new Date().toISOString() }
+                      );
+                      
+                      console.log(`✅ [Table Action] Successfully upserted invoice status to: paid in both tables`);
                       
                       // Update studentInvoiceStatus ngay lập tức
                       setStudentInvoiceStatus((prev) => {

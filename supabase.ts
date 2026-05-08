@@ -1,15 +1,39 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-// Supabase configuration
-const SUPABASE_URL = "https://fwulklijfntedslwiryj.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3dWxrbGlqZm50ZWRzbHdpcnlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5ODcxNzksImV4cCI6MjA5MzU2MzE3OX0.KjFpRIYEYDxU4h7iRHu11Y8pH1RNLIZ00nhGWad_0II-";
-const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ3dWxrbGlqZm50ZWRzbHdpcnlqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3Nzk4NzE3OSwiZXhwIjoyMDkzNTYzMTc5fQ.T3-jGK5N0HTYPt3HoBekenoAg5hI3JmJJqkaW3HZSPQ";
+// Supabase configuration from environment variables
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const SUPABASE_SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY || "";
 
 // Create Supabase client with anon key (for client-side operations)
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    storageKey: 'tritue-anon-auth', // Tránh xung đột instance
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  }
+});
 
 // Create Supabase client with service key (for admin operations)
-export const supabaseAdmin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+// WARNING: This is dangerous in a frontend app. Disable auth persistence to avoid instance conflicts.
+export const supabaseAdmin: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: {
+    storageKey: 'tritue-admin-auth', // Tránh xung đột instance
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 20,
+    },
+  }
+});
 
 // Helper to get table name mapping (Firebase path -> Supabase table name)
 export const getTableName = (firebasePath: string): string => {
@@ -30,6 +54,7 @@ export const getTableName = (firebasePath: string): string => {
     "datasheet/Điểm_tự_nhập": "diem_tu_nhap", // Custom Scores
     "datasheet/Danh_sách_học_sinh": "hoc_sinh", // Alias for Học_sinh
     "datasheet/Thời_khoá_biểu": "thoi_khoa_bieu", // Timetable
+    "datasheet/Lịch_trực_trung_tâm": "lich_truc_trung_tam", // Lịch trực trung tâm
   };
 
   // Try exact match first
@@ -41,20 +66,19 @@ export const getTableName = (firebasePath: string): string => {
   // Extract the table name part (before the ID)
   const parts = firebasePath.split("/");
 
-  // Check if last part looks like an ID (starts with - or is a long alphanumeric string)
+  // Check if last part looks like an ID
   const lastPart = parts[parts.length - 1];
-  const isId = lastPart.startsWith("-") || lastPart.length > 20 || /^[a-zA-Z0-9_-]{20,}$/.test(lastPart);
+  
+  // An ID is likely if:
+  // 1. It starts with '-' (Firebase style)
+  // 2. It's long (> 15 chars)
+  // 3. The path starts with 'datasheet/' and has 3+ parts (e.g., datasheet/Học_sinh/ID)
+  const isId = lastPart.startsWith("-") || 
+               lastPart.length > 15 || 
+               (parts[0] === "datasheet" && parts.length >= 3);
 
-  if (isId && parts.length >= 2) {
-    // Remove the ID part and try to match the table path
-    const tablePath = parts.slice(0, -1).join("/");
-    if (tableMapping[tablePath]) {
-      return tableMapping[tablePath];
-    }
-  }
-
-  // Try to extract table name from path (use second-to-last if last looks like ID)
-  const tableName = isId && parts.length >= 2 ? parts[parts.length - 2] : lastPart;
+  // Try to extract table name from path
+  const tableName = isId ? parts[parts.length - 2] : lastPart;
 
   // Convert Vietnamese to non-accented and lowercase
   return tableName

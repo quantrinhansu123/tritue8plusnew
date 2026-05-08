@@ -8,12 +8,14 @@ const Authoriation = ({ children }: { children: React.ReactNode }) => {
   
   // Show loading state
   if (loading) {
+    console.log("⏳ Authoriation - Loading state active, children unmounted");
     return (
       <div className="container p-6">
         <div className="text-center">Đang tải...</div>
       </div>
     );
   }
+  console.log("✅ Authoriation - Loading finished, mounting children. Profile:", userProfile?.email);
   
   // Check if user is admin by either isAdmin flag or role
   const isAdmin = userProfile?.isAdmin === true || userProfile?.role?.toLowerCase() === "admin";

@@ -3,6 +3,8 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useRef,
+  useCallback,
   ReactNode,
 } from "react";
 import {
@@ -16,6 +18,7 @@ import {
 import { auth, DATABASE_URL_BASE } from "../firebase";
 import { UserProfile, UserRole } from "../types";
 import { isAdmin } from "../config/admins";
+import { supabase, supabaseAdmin } from "../supabase";
 
 const USERS_URL = `${DATABASE_URL_BASE}/datasheet/Users.json`;
 const TEACHERS_URL = `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn.json`;
@@ -112,12 +115,53 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return !storedProfile; // If we have a stored profile, we don't need to wait for onAuthStateChanged
   });
 
+  // Use refs to prevent infinite loops and race conditions
+  const isFetchingRef = useRef<string | null>(null);
+  const profileRef = useRef<UserProfile | null>(userProfile);
+
+  // Update profile ref whenever userProfile changes
+  useEffect(() => {
+    profileRef.current = userProfile;
+  }, [userProfile]);
+
+  // Helper to compare profiles and avoid redundant updates
+  const isProfileSame = (newProfile: UserProfile | null, oldProfile: UserProfile | null) => {
+    if (!newProfile && !oldProfile) return true;
+    if (!newProfile || !oldProfile) return false;
+    
+    // Check key fields
+    const keysToCompare: (keyof UserProfile)[] = [
+      "uid", "email", "role", "displayName", "teacherId", "studentId", "position", "isAdmin"
+    ];
+    
+    return keysToCompare.every(key => newProfile[key] === oldProfile[key]);
+  };
+
   // Fetch or create user profile
   const fetchUserProfile = async (user: User): Promise<UserProfile | null> => {
+    // Prevent concurrent fetches for the same user
+    if (isFetchingRef.current === user.email) {
+      console.log("⏳ Fetch already in progress for:", user.email);
+      return profileRef.current;
+    }
+
     try {
-      const response = await fetch(USERS_URL);
+      isFetchingRef.current = user.email;
+      console.log("⏳ Fetching user profile for:", user.email);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
+      const response = await fetch(USERS_URL, { signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        console.error("❌ Failed to fetch users:", response.status);
+        isFetchingRef.current = null;
+        return null;
+      }
+
       const data = await response.json();
-      console.log(data, "000000000000");
+      console.log("✅ Fetched users data:", Object.keys(data || {}).length, "users");
       // Find existing user profile
       let profile: UserProfile | null = null;
       if (data) {
@@ -146,24 +190,42 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           role,
         });
 
+        const createController = new AbortController();
+        const createTimeout = setTimeout(() => createController.abort(), 8000);
+
         const createResponse = await fetch(USERS_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(newProfile),
+          signal: createController.signal,
         });
+        clearTimeout(createTimeout);
 
         if (createResponse.ok) {
           const result = await createResponse.json();
           profile = { ...newProfile, uid: result.name };
         } else {
+          isFetchingRef.current = null;
           return null;
         }
       }
 
       // Fetch teacher position from Giáo_viên table
       try {
-        const teachersResponse = await fetch(TEACHERS_URL);
+        const teachersController = new AbortController();
+        const teachersTimeout = setTimeout(() => teachersController.abort(), 8000);
+
+        const teachersResponse = await fetch(TEACHERS_URL, { signal: teachersController.signal });
+        clearTimeout(teachersTimeout);
+
+        if (!teachersResponse.ok) {
+          console.warn("⚠️ Failed to fetch teachers:", teachersResponse.status);
+          isFetchingRef.current = null;
+          return profile;
+        }
+
         const teachersData = await teachersResponse.json();
+        console.log("✅ Fetched teachers data:", Object.keys(teachersData || {}).length, "teachers");
 
         if (teachersData) {
           const teacherEntry = Object.entries(teachersData).find(
@@ -173,7 +235,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           );
 
           if (teacherEntry) {
-            console.log(teacherEntry, "sfsfdsdfdsfsbb");
             const [teacherId, teacherData]: [string, any] = teacherEntry;
             const position = teacherData["Vị trí"] || "";
 
@@ -182,22 +243,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const isAdminByEmail = isAdmin(user.email); // Using the function from config/admins.ts
             const finalIsAdmin = isAdminByPosition || isAdminByEmail;
 
+            // BẮT BUỘC ĐỒNG BỘ ROLE VÀ ISADMIN
+            // Nếu không phải admin thực sự, ép về role "teacher" để tránh bị kẹt role cũ
+            const finalRole = finalIsAdmin ? "admin" : "teacher";
+
             // Update profile with position info
             profile = {
               ...profile,
               teacherId,
               position,
               isAdmin: finalIsAdmin,
+              role: finalRole,
             };
 
             console.log("✅ User profile loaded with position:", {
               email: user.email,
               position: position,
-              isAdminByPosition: isAdminByPosition,
-              isAdminByEmail: isAdminByEmail,
-              finalIsAdmin: finalIsAdmin,
-              teacherId: teacherId,
-              fullTeacherData: teacherData,
+              isAdmin: finalIsAdmin,
             });
           } else {
             // If no teacher entry found, fallback to email-based admin check
@@ -216,8 +278,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.warn("⚠️ Could not fetch teacher position:", error);
       }
 
+      isFetchingRef.current = null;
       return profile;
     } catch (error) {
+      isFetchingRef.current = null;
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.error("⏱️ Timeout fetching user profile (8s):", user.email);
+        return null;
+      }
       console.error("❌ Error fetching user profile:", error);
       return null;
     }
@@ -246,7 +314,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (!isSubscribed) return;
 
       console.log('🔐 Auth state changed:', { user: user?.email || 'null', uid: user?.uid || 'null' });
-      
+
       setCurrentUser(user);
       // Don't save User object to localStorage - it's not serializable
       // saveToStorage(STORAGE_KEYS.CURRENT_USER, user);
@@ -257,8 +325,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const profile = await fetchUserProfile(user);
           if (!isSubscribed) return;
 
-          setUserProfile(profile);
-          saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
+          // Only update state if profile has actually changed to prevent re-render loops
+          if (!isProfileSame(profile, profileRef.current)) {
+            console.log("🔄 Updating user profile state (data changed)");
+            setUserProfile(profile);
+            saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
+          } else {
+            console.log("ℹ️ Skipping profile update (data identical)");
+          }
 
           // Check if teacher needs onboarding
           if (profile && profile.role === "teacher" && !profile.teacherId) {
@@ -286,7 +360,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           // 2. Page refresh with teacher/parent login - restore the profile
           console.log("📦 Restoring stored profile (teacher/parent login):", storedProfile.email);
           setUserProfile(storedProfile);
-          
+
           // Restore currentUser from stored profile
           const restoredUser = {
             uid: storedProfile.uid,
@@ -295,7 +369,44 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             displayName: storedProfile.displayName || undefined,
           } as User;
           setCurrentUser(restoredUser);
-          
+
+          // XÁC THỰC LẠI QUYỀN HẠN NGẦM (RE-VALIDATION)
+          // Tránh việc giáo viên bị lưu quyền admin cũ trong localStorage mãi mãi
+          if (storedProfile.role === "admin" || storedProfile.role === "teacher") {
+            console.log("🔄 Background re-validating teacher permissions...");
+            import("@/utils/supabaseHelpers").then(async ({ supabaseGetAll }) => {
+              try {
+                const data = await supabaseGetAll("datasheet/Giáo_viên", true); // force fetch
+                if (data) {
+                  const teacherEntry = Object.entries(data).find(
+                    ([_, t]: [string, any]) => t.Email === storedProfile.email || t["Email công ty"] === storedProfile.email
+                  );
+                  
+                  if (teacherEntry) {
+                    const [_, teacherData] = teacherEntry as [string, any];
+                    const isActuallyAdmin = teacherData.vi_tri === "Admin" || teacherData["Vị trí"] === "Admin" || isAdmin(storedProfile.email);
+                    const correctRole = isActuallyAdmin ? "admin" : "teacher";
+                    
+                    if (storedProfile.isAdmin !== isActuallyAdmin || storedProfile.role !== correctRole) {
+                      console.warn("⚠️ Permission mismatch detected! Auto-fixing profile.");
+                      const updatedProfile = {
+                        ...storedProfile,
+                        isAdmin: isActuallyAdmin,
+                        role: correctRole
+                      };
+                      setUserProfile(updatedProfile);
+                      saveToStorage(STORAGE_KEYS.USER_PROFILE, updatedProfile);
+                    } else {
+                      console.log("✅ Permissions verified and correct.");
+                    }
+                  }
+                }
+              } catch (err) {
+                console.error("❌ Failed to re-validate teacher:", err);
+              }
+            });
+          }
+
           // Check onboarding status
           if (storedProfile.role === "teacher" && !storedProfile.teacherId) {
             setNeedsOnboarding(true);
@@ -376,53 +487,61 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     password: string
   ) => {
     try {
-      console.log("🏫 Signing in with teacher credentials:", email);
+      console.log("🏫 Signing in with teacher credentials (Supabase):", email);
 
-      // Fetch teachers from Firebase
-      const response = await fetch(TEACHERS_URL);
-      if (!response.ok) {
-        throw new Error("Failed to fetch teachers data");
+      // Fetch teachers from Supabase instead of Firebase
+      // Use supabaseAdmin to bypass potential RLS issues during migration
+      const { data: teachersData, error: sbError } = await supabaseAdmin
+        .from("giao_vien")
+        .select("*");
+
+      if (sbError) {
+        console.error("❌ Supabase fetch error:", sbError);
+        throw new Error("Failed to fetch teachers from Supabase: " + sbError.message);
       }
 
-      const teachersData = await response.json();
-      if (!teachersData) {
-        throw new Error("No teachers found");
+      console.log("📊 Teachers found in DB:", teachersData?.length || 0);
+
+      if (!teachersData || teachersData.length === 0) {
+        throw new Error("No teachers found in database (Table: giao_vien)");
       }
 
       // Find teacher by email and password
-      const teacherEntry = Object.entries(teachersData).find(
-        ([id, teacher]: [string, any]) => {
-          const teacherEmail =
-            teacher?.["Email"] || teacher?.["Email công ty"] || "";
-          const teacherPassword = teacher?.["Password"] || "";
-          return (
-            teacherEmail.toLowerCase() === email.toLowerCase() &&
-            teacherPassword === password
-          );
-        }
-      );
+      // Note: Supabase columns are usually snake_case or as created. 
+      // Based on the screenshot and common patterns: email, password or "Email", "Password"
+      const teacher = teachersData.find((t: any) => {
+        const teacherEmail = t.email || t.Email || t["Email công ty"] || "";
+        const teacherPassword = t.password || t.Password || "";
+        return (
+          teacherEmail.toLowerCase() === email.toLowerCase() &&
+          teacherPassword === password
+        );
+      });
 
-      if (!teacherEntry) {
+      if (!teacher) {
         throw new Error("Invalid email or password");
       }
 
-      const [teacherId, teacherData] = teacherEntry as [string, any];
+      const teacherId = teacher.id;
+      const teacherName = teacher.ten_giao_vien || teacher["Họ và tên"] || teacher.ho_ten || "";
 
       // Create a mock user object for teacher login
       const mockUser = {
         uid: teacherId,
-        email: teacherData["Email"] || teacherData["Email công ty"],
+        email: teacher.email || teacher.Email || teacher["Email công ty"],
         emailVerified: true,
-        displayName: teacherData["Họ và tên"],
+        displayName: teacherName,
       } as User;
 
       // Create user profile
+      const isActuallyAdmin = teacher.vi_tri === "Admin" || teacher["Vị trí"] === "Admin" || isAdmin(mockUser.email!);
+      
       const profile: UserProfile = {
         uid: mockUser.uid,
         email: mockUser.email!,
-        displayName: teacherData["Họ và tên"],
-        role: teacherData["Vị trí"] === "Admin" ? "admin" : "teacher",
-        isAdmin: teacherData["Vị trí"] === "Admin" || isAdmin(mockUser.email!),
+        displayName: teacherName,
+        role: isActuallyAdmin ? "admin" : "teacher",
+        isAdmin: isActuallyAdmin,
         createdAt: new Date().toISOString(),
       };
 
@@ -450,51 +569,65 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log("👨‍👩‍👧 Signing in with parent credentials:", studentCode);
 
-      // Fetch students from Firebase
-      const response = await fetch(STUDENTS_URL);
-      if (!response.ok) {
-        throw new Error("Failed to fetch students data");
+      // Fetch students from Supabase instead of Firebase
+      const { data: studentsData, error: sbError } = await supabaseAdmin
+        .from("hoc_sinh")
+        .select("*");
+
+      if (sbError) {
+        throw new Error("Failed to fetch students from Supabase: " + sbError.message);
       }
 
-      const studentsData = await response.json();
-      if (!studentsData) {
-        throw new Error("No students found");
+      if (!studentsData || studentsData.length === 0) {
+        throw new Error("No students found in database");
       }
 
       // Find student by student code and password
-      const studentEntry = Object.entries(studentsData).find(
-        ([id, student]: [string, any]) => {
-          const code = student?.["Mã học sinh"] || "";
-          const pwd = student?.["Mật khẩu"] || "";
-          return (
-            code.toLowerCase() === studentCode.toLowerCase() &&
-            pwd === password
-          );
-        }
-      );
+      const student = studentsData.find((s: any) => {
+        // Handle both snake_case (Supabase) and PascalCase (Original)
+        const code = (s.ma_hoc_sinh || s["Mã học sinh"] || s.code || "").toString().trim();
+        const pwd = (s.password || s.mat_khau || s["Mật khẩu"] || "").toString().trim();
+        
+        return (
+          code.toLowerCase() === studentCode.trim().toLowerCase() &&
+          pwd === password.trim()
+        );
+      });
 
-      if (!studentEntry) {
+      if (!student) {
         throw new Error("Mã học sinh hoặc mật khẩu không đúng");
       }
 
-      const [studentId, studentData] = studentEntry as [string, any];
+      console.log("🔍 Found student for login:", { 
+        id: student.id, 
+        code: student.ma_hoc_sinh || student["Mã học sinh"] || student.code,
+        hasPassword: !!(student.password || student.mat_khau || student["Mật khẩu"]),
+        rawKeys: Object.keys(student)
+      });
+
+      const studentId = student.id;
+      const studentName = student.ho_va_ten || student["Họ và tên"] || student.name || "";
+      const studentCodeActual = student.ma_hoc_sinh || student["Mã học sinh"] || student.code || "";
 
       // Check if password is set
-      if (!studentData["Mật khẩu"]) {
+      const studentPassword = student.password || student.mat_khau || student["Mật khẩu"];
+      if (!studentPassword && studentPassword !== 0) {
+        console.warn("⚠️ Student password field is empty in DB:", student);
         throw new Error("Tài khoản chưa được kích hoạt. Vui lòng liên hệ nhà trường.");
       }
 
       // Check if student status is "Hủy" (cancelled)
-      if (studentData["Trạng thái"] === "Hủy") {
+      const studentStatus = student.trang_thai || student["Trạng thái"];
+      if (studentStatus === "Hủy") {
         throw new Error("Tài khoản học sinh đã bị hủy. Vui lòng liên hệ với trung tâm để biết thêm chi tiết.");
       }
 
       // Create a mock user object for parent login
       const mockUser = {
         uid: `parent_${studentId}`,
-        email: studentData["Email"] || `${studentCode}@parent.local`,
+        email: student.email || student["Email"] || `${studentCode}@parent.local`,
         emailVerified: true,
-        displayName: `Phụ huynh ${studentData["Họ và tên"]}`,
+        displayName: `Phụ huynh ${studentName}`,
       } as User;
 
       // Create user profile for parent
@@ -504,8 +637,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         displayName: mockUser.displayName!,
         role: "parent" as UserRole,
         studentId: studentId,
-        studentName: studentData["Họ và tên"],
-        studentCode: studentData["Mã học sinh"],
+        studentName: studentName,
+        studentCode: studentCode,
         isAdmin: false,
         createdAt: new Date().toISOString(),
       };

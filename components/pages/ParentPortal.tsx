@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { DATABASE_URL_BASE, database } from "@/firebase";
+// Firebase imports removed since we migrated to Supabase Helper functions
 import {
   supabaseOnValue,
   convertFromSupabaseFormat,
+  supabaseGetAll,
+  supabaseGetById,
 } from "@/utils/supabaseHelpers";
 import {
   Card,
@@ -115,15 +117,7 @@ const ParentPortal: React.FC = () => {
         console.log("📥 Fetching data for studentId:", userProfile.studentId);
 
         // Fetch student info
-        const studentRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Danh_sách_học_sinh/${userProfile.studentId}.json`
-        );
-        
-        if (!studentRes.ok) {
-          throw new Error(`Failed to fetch student data: ${studentRes.status}`);
-        }
-        
-        const studentData = await studentRes.json();
+        const studentData = await supabaseGetById("datasheet/Học_sinh", userProfile.studentId, true);
         console.log("✅ Student data fetched:", studentData);
         
         if (!studentData) {
@@ -153,10 +147,7 @@ const ParentPortal: React.FC = () => {
         setStudent(studentData);
 
         // Fetch all classes
-        const classesRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Lớp_học.json`
-        );
-        const classesData = await classesRes.json();
+        const classesData = await supabaseGetAll("datasheet/Lớp_học");
         if (classesData) {
           const studentClasses = Object.entries(classesData)
             .filter(([id, cls]: [string, any]) =>
@@ -171,10 +162,7 @@ const ParentPortal: React.FC = () => {
         }
 
         // Fetch attendance sessions
-        const sessionsRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Điểm_danh_sessions.json`
-        );
-        const sessionsData = await sessionsRes.json();
+        const sessionsData = await supabaseGetAll("datasheet/Điểm_danh_sessions");
         if (sessionsData) {
           const studentSessions = Object.entries(sessionsData)
             .filter(([id, session]: [string, any]) =>
@@ -187,10 +175,7 @@ const ParentPortal: React.FC = () => {
         }
 
         // Fetch redeem history
-        const redeemRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Đổi_thưởng.json`
-        );
-        const redeemData = await redeemRes.json();
+        const redeemData = await supabaseGetAll("datasheet/Đổi_thưởng");
         if (redeemData) {
           const studentRedeems = Object.entries(redeemData)
             .filter(([id, redeem]: [string, any]) =>
@@ -203,14 +188,13 @@ const ParentPortal: React.FC = () => {
         }
 
         // Fetch invoices
-        const invoicesRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí.json`
-        );
-        const invoicesData = await invoicesRes.json();
+        const invoicesData = await supabaseGetAll("datasheet/Phiếu_thu_học_phí");
         if (invoicesData) {
           const studentInvoices = Object.entries(invoicesData)
-            .filter(([key, invoice]: [string, any]) =>
-              key.startsWith(`${userProfile.studentId}-`)
+            .filter(([id, invoice]: [string, any]) =>
+              invoice.student_id === userProfile.studentId || 
+              invoice.studentId === userProfile.studentId ||
+              id.startsWith(`${userProfile.studentId}-`)
             )
             .map(([id, invoice]: [string, any]) => ({ id, ...invoice }))
             .sort((a, b) => b.year - a.year || b.month - a.month);
@@ -218,10 +202,7 @@ const ParentPortal: React.FC = () => {
         }
 
         // Fetch schedule events
-        const scheduleRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Thời_khoá_biểu.json`
-        );
-        const scheduleData = await scheduleRes.json();
+        const scheduleData = await supabaseGetAll("datasheet/Thời_khoá_biểu");
         if (scheduleData) {
           const studentSchedule = Object.entries(scheduleData)
             .filter(([id, event]: [string, any]) =>
@@ -232,11 +213,8 @@ const ParentPortal: React.FC = () => {
         }
 
         // Fetch custom scores (Điểm tự nhập) for all classes student is in
-        const customScoresRes = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Điểm_tự_nhập.json`
-        );
-        const customScoresAllData = await customScoresRes.json();
-        if (customScoresAllData) {
+        const customScoresAllData = await supabaseGetAll("datasheet/Điểm_tự_nhập");
+        if (customScoresAllData && classesData) {
           // Get class IDs that student belongs to
           const studentClassIds = Object.entries(classesData || {})
             .filter(([id, cls]: [string, any]) =>
@@ -255,7 +233,7 @@ const ParentPortal: React.FC = () => {
         }
 
         setLoading(false);
-        console.log("✅ All data loaded successfully");
+        console.log("✅ All data loaded successfully from Supabase");
       } catch (error) {
         console.error("❌ Error fetching data:", error);
         Modal.error({

@@ -15,8 +15,6 @@ import {
 import { PlusOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
 import { subjectOptions, gradeOptions } from "../../utils/selectOptions";
 import WrapperContent from "@/components/WrapperContent";
-import { ref, onValue, get, set, update, remove, push } from "firebase/database";
-import { database } from "../../firebase";
 import {
   supabaseOnValue,
   convertFromSupabaseFormat,
@@ -203,12 +201,8 @@ const CourseManagement = () => {
         : null;
 
       if (editingCourse) {
-        // Update existing course
-        const courseRef = ref(
-          database,
-          `datasheet/Khóa_học/${editingCourse.id}`
-        );
-        await update(courseRef, {
+        // Update existing course using Supabase
+        const updates = {
           Khối: values["Khối"],
           "Môn học": values["Môn học"],
           Giá: values["Giá"],
@@ -218,7 +212,8 @@ const CourseManagement = () => {
           "Giáo viên phụ trách": selectedTeacher?.["Họ và tên"] || "",
           "Teacher ID": values["Teacher ID"] || "",
           "Ngày cập nhật": timestamp,
-        });
+        };
+        await supabaseUpdate("datasheet/Khóa_học", editingCourse.id, updates);
         message.success("Cập nhật khóa học thành công");
       } else {
         // Add new course

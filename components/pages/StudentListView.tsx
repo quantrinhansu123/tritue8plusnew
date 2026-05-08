@@ -4,7 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE } from "@/firebase";
 import { supabaseAdmin } from "@/supabase";
-import { supabaseGetAll, supabaseSet, supabaseRemove, supabaseOnValue, convertFromSupabaseFormat, convertToSupabaseFormat } from "@/utils/supabaseHelpers";
+import { supabaseGetAll, supabaseGetById, supabaseSet, supabaseRemove, supabaseOnValue, convertFromSupabaseFormat, convertToSupabaseFormat } from "@/utils/supabaseHelpers";
 import {
   Button,
   Input,
@@ -136,10 +136,10 @@ const StudentListView: React.FC = () => {
   const normalizeText = (value: string) =>
     value
       ? value
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .trim()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
       : "";
   const [isExtendModalOpen, setExtendModalOpen] = useState(false);
   const [extendingStudent, setExtendingStudent] = useState<Student | null>(
@@ -165,7 +165,7 @@ const StudentListView: React.FC = () => {
   const [editingStarsStudent, setEditingStarsStudent] = useState<Student | null>(null);
   const [starsHistory, setStarsHistory] = useState<any[]>([]);
   const [syncingStudents, setSyncingStudents] = useState(false);
-  
+
 
   // Form instances
   const [editStudentForm] = Form.useForm();
@@ -224,18 +224,20 @@ const StudentListView: React.FC = () => {
     };
   }, []);
 
-  // Fetch attendance sessions (for calculating hours and sessions)
+  // Fetch attendance sessions from Supabase
   useEffect(() => {
     const fetchAttendanceSessions = async () => {
       try {
-        const response = await fetch(ATTENDANCE_SESSIONS_URL);
-        const data = await response.json();
-        if (data) {
-          const sessionsArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
-          console.log("📊 Attendance sessions loaded:", sessionsArray.length);
+        const data = await supabaseGetAll("datasheet/Điểm_danh_sessions");
+        if (data && typeof data === 'object') {
+          const sessionsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          console.log("📊 Attendance sessions loaded from Supabase:", sessionsArray.length);
           setAttendanceSessions(sessionsArray);
         }
         setLoading(false);
@@ -245,6 +247,22 @@ const StudentListView: React.FC = () => {
       }
     };
     fetchAttendanceSessions();
+
+    // Realtime update for attendance sessions
+    const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
+      if (data && typeof data === 'object') {
+        const sessionsArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        setAttendanceSessions(sessionsArray);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Fetch schedule events (for display purposes)
@@ -333,18 +351,20 @@ const StudentListView: React.FC = () => {
     };
   }, []);
 
-  // Fetch classes
+  // Fetch classes from Supabase
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const response = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
-        const data = await response.json();
-        if (data) {
-          const classesArray = Object.entries(data).map(([id, cls]: [string, any]) => ({
-            id,
-            ...cls,
-          }));
-          console.log("📚 Classes fetched:", classesArray.length);
+        const data = await supabaseGetAll("datasheet/Lớp_học");
+        if (data && typeof data === 'object') {
+          const classesArray = Object.entries(data).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "lop_hoc");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          console.log("📚 Classes fetched from Supabase:", classesArray.length);
           setClasses(classesArray);
         }
       } catch (error) {
@@ -352,6 +372,22 @@ const StudentListView: React.FC = () => {
       }
     };
     fetchClasses();
+
+    // Realtime update for classes
+    const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
+      if (data && typeof data === 'object') {
+        const classesArray = Object.entries(data).map(([key, value]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(value, "lop_hoc");
+          return {
+            id: key,
+            ...converted,
+          };
+        });
+        setClasses(classesArray);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Fetch stars history
@@ -433,9 +469,17 @@ const StudentListView: React.FC = () => {
   useEffect(() => {
     if (editingStudent && isEditModalOpen) {
       // Determine registered class IDs from `classes` table where this student is enrolled
-      const enrolledClasses = classes.filter((c) => (c["Student IDs"] || []).includes(editingStudent.id));
+      const enrolledClasses = classes.filter((c) => {
+        const studentIdsRaw = c["Student IDs"];
+        if (Array.isArray(studentIdsRaw)) {
+          return studentIdsRaw.includes(editingStudent.id);
+        } else if (studentIdsRaw && typeof studentIdsRaw === "object") {
+          return !!studentIdsRaw[editingStudent.id];
+        }
+        return false;
+      });
       const enrolledClassIds = enrolledClasses.map((c) => c.id);
-      
+
       // Get the most recent enrollment date from enrolled classes (if any)
       let existingEnrollmentDate = null;
       for (const cls of enrolledClasses) {
@@ -453,6 +497,7 @@ const StudentListView: React.FC = () => {
         dob: editingStudent["Ngày sinh"] || "",
         phone: editingStudent["Số điện thoại"] || "",
         parentPhone: editingStudent["SĐT phụ huynh"] || "",
+        parentName: editingStudent["Họ tên phụ huynh"] || editingStudent["Phụ huynh"] || "",
         status: editingStudent["Trạng thái"] || "",
         address: editingStudent["Địa chỉ"] || "",
         password: editingStudent["Mật khẩu"] || "",
@@ -616,8 +661,17 @@ const StudentListView: React.FC = () => {
 
     // Find all classes where this student is enrolled
     classes.forEach((classInfo) => {
-      const studentIds = classInfo["Student IDs"] || [];
-      if (studentIds.includes(studentId)) {
+      const studentIdsRaw = classInfo["Student IDs"];
+      let isEnrolled = false;
+
+      if (Array.isArray(studentIdsRaw)) {
+        isEnrolled = studentIdsRaw.includes(studentId);
+      } else if (studentIdsRaw && typeof studentIdsRaw === "object") {
+        // Handle object format { "studentId": true }
+        isEnrolled = !!studentIdsRaw[studentId];
+      }
+
+      if (isEnrolled) {
         const subjectName = classInfo["Môn học"] || "Chưa xác định";
         studentClasses.push({
           className: classInfo["Tên lớp"] || "Chưa đặt tên",
@@ -750,7 +804,7 @@ const StudentListView: React.FC = () => {
         // Filter by search term
         if (searchTerm) {
           const search = normalizeText(searchTerm);
-          const matchSearch = 
+          const matchSearch =
             normalizeText(student["Họ và tên"] || "").includes(search) ||
             normalizeText(student["Mã học sinh"] || "").includes(search) ||
             normalizeText(student["Số điện thoại"] || "").includes(search) ||
@@ -771,11 +825,11 @@ const StudentListView: React.FC = () => {
           const studentClassIds = classes
             .filter((c) => (c["Student IDs"] || []).includes(student.id))
             .map((c) => c.id);
-          
-          const hasMatchingClass = classFilter.some((classId) => 
+
+          const hasMatchingClass = classFilter.some((classId) =>
             studentClassIds.includes(classId)
           );
-          
+
           if (!hasMatchingClass) {
             return false;
           }
@@ -900,11 +954,11 @@ const StudentListView: React.FC = () => {
 
         // Generate new ID if not provided
         const newId = id || `student_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+
         // Convert to Supabase format
         const supabaseData = convertToSupabaseFormat(dataWithoutId, "hoc_sinh");
         supabaseData.id = newId;
-        
+
         // Save to Supabase
         const saveResult = await supabaseSet(`datasheet/Học_sinh/${newId}`, supabaseData);
         if (!saveResult) {
@@ -913,57 +967,61 @@ const StudentListView: React.FC = () => {
           return;
         }
         console.log("✅ Student added to Supabase:", newId);
-        
+
         // Convert back to Firebase format for display
         const convertedBack = convertFromSupabaseFormat(supabaseData, "hoc_sinh");
         const newStudent = { id: newId, ...convertedBack } as Student;
+        // If selected classes provided, add this student to those classes
+        if (selectedClassIds && selectedClassIds.length > 0) {
+          try {
+            // Use provided enrollment date or default to today
+            const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            for (const classId of selectedClassIds) {
+              // Fetch fresh class data from Supabase
+              const freshClassData = await supabaseGetById("datasheet/Lớp_học", classId, true);
+              if (!freshClassData) continue;
+
+              const studentIdsRaw = freshClassData["Student IDs"] || freshClassData["student_ids"];
+              let currentIds: string[] = [];
+
+              if (Array.isArray(studentIdsRaw)) {
+                currentIds = studentIdsRaw;
+              } else if (studentIdsRaw && typeof studentIdsRaw === "object" && studentIdsRaw !== null) {
+                currentIds = Object.keys(studentIdsRaw).filter(key => (studentIdsRaw as any)[key] === true);
+              }
+
+              if (!currentIds.includes(newId)) {
+                const updatedIds = [...currentIds, newId];
+                const currentEnrollments = freshClassData["Student Enrollments"] || freshClassData["student_enrollments"] || {};
+                const updatedEnrollments = {
+                  ...currentEnrollments,
+                  [newId]: { enrollmentDate: dateToUse }
+                };
+
+                await supabaseSet(`datasheet/Lớp_học/${classId}`, {
+                  "Student IDs": updatedIds,
+                  "Student Enrollments": updatedEnrollments
+                }, { upsert: true });
+              }
+            }
+            // Refresh classes locally
+            const clsData = await supabaseGetAll("datasheet/Lớp_học");
+            if (clsData && typeof clsData === 'object') {
+              const classesArray = Object.entries(clsData).map(([id, cls]: [string, any]) => {
+                const converted = convertFromSupabaseFormat(cls, "lop_hoc");
+                return { id, ...converted };
+              });
+              setClasses(classesArray);
+            }
+          } catch (err) {
+            console.error("Error updating class membership for new student:", err);
+          }
+        }
+        
         setStudents([...students, newStudent]);
         setEditModalOpen(false);
         setEditingStudent(null);
         message.success("Thêm học sinh thành công!");
-
-          // If selected classes provided, add this student to those classes
-          if (selectedClassIds && selectedClassIds.length > 0) {
-            try {
-              // Use provided enrollment date or default to today
-              const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-              for (const classId of selectedClassIds) {
-                // Fetch fresh class data from Firebase to avoid stale state issues
-                const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
-                const freshClassData = await freshClassResp.json();
-                if (!freshClassData) continue;
-                
-                const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
-                if (!currentIds.includes(newStudent.id)) {
-                  const updatedIds = [...currentIds, newStudent.id];
-                  const currentEnrollments = freshClassData["Student Enrollments"] || {};
-                  const updatedEnrollments = {
-                    ...currentEnrollments,
-                    [newStudent.id]: { enrollmentDate: dateToUse }
-                  };
-                  const url = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
-                  await fetch(url, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      "Student IDs": updatedIds,
-                      "Student Enrollments": updatedEnrollments
-                    }),
-                  });
-                }
-              }
-              // Refresh classes locally
-              const resp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
-              const clsData = await resp.json();
-              if (clsData) {
-                const classesArray = Object.entries(clsData).map(([id, cls]: [string, any]) => ({ id, ...cls }));
-                setClasses(classesArray);
-              }
-              message.success(`Đã thêm học sinh vào ${selectedClassIds.length} lớp (từ ngày ${dateToUse})`);
-            } catch (err) {
-              console.error("Error updating class membership for new student:", err);
-            }
-          }
       } else {
         // Check if Hours Extended changed
         const oldHours = Number(editingStudent["Số giờ đã gia hạn"]) || 0;
@@ -984,9 +1042,10 @@ const StudentListView: React.FC = () => {
         // Convert to Supabase format
         const supabaseData = convertToSupabaseFormat(studentData, "hoc_sinh");
         supabaseData.id = studentData.id;
-        
+
         // Update in Supabase
         try {
+          console.log("📤 Updating student in Supabase:", { id: studentData.id, supabaseData });
           const updateResult = await supabaseSet(`datasheet/Học_sinh/${studentData.id}`, supabaseData);
           if (!updateResult) {
             message.error("❌ Không thể cập nhật học sinh trong Supabase. Kiểm tra Console (F12) để xem chi tiết lỗi.");
@@ -999,113 +1058,118 @@ const StudentListView: React.FC = () => {
           return;
         }
         console.log("✅ Student updated in Supabase successfully");
-        
+
         // Update local state
         const updatedStudent = convertFromSupabaseFormat(supabaseData, "hoc_sinh");
         setStudents(students.map(s => s.id === studentData.id ? { id: studentData.id, ...updatedStudent } as Student : s));
 
-          // If Hours Extended changed, log it in Extension History
-          if (hoursChanged) {
-            console.log("📝 Creating adjustment log for Hours Extended change");
+        // If Hours Extended changed, log it in Extension History
+        if (hoursChanged) {
+          console.log("📝 Creating adjustment log for Hours Extended change");
 
-            // Calculate current studied hours
-            const stats = calculateStudentHours(editingStudent["Họ và tên"]);
-            const totalStudiedHours = stats.hours + stats.minutes / 60;
-            const hoursRemaining = Math.max(0, newHours - totalStudiedHours);
+          // Calculate current studied hours
+          const stats = calculateStudentHours(editingStudent.id);
+          const totalStudiedHours = stats.hours + stats.minutes / 60;
+          const hoursRemaining = Math.max(0, newHours - totalStudiedHours);
 
-            const now = new Date();
-            const adjustmentLog = {
-              studentId: studentData.id,
-              "Giờ đã học": `${stats.hours}h ${stats.minutes}p`,
-              "Giờ còn lại": hoursRemaining.toFixed(2),
-              "Giờ nhập thêm": newHours - oldHours, // The difference (can be negative)
-              "Người nhập": currentUsername,
-              "Ngày nhập": now.toISOString().split("T")[0],
-              "Giờ nhập": now.toTimeString().split(" ")[0],
-              Timestamp: now.toISOString(),
-              "Adjustment Type": "Manual Edit from Student Profile",
-              "Old Total": oldHours,
-              "New Total": newHours,
-              Note: `Hours Extended manually adjusted from ${oldHours}h to ${newHours}h`,
-            };
+          const now = new Date();
+          const adjustmentLog = {
+            studentId: studentData.id,
+            "Giờ đã học": `${stats.hours}h ${stats.minutes}p`,
+            "Giờ còn lại": hoursRemaining.toFixed(2),
+            "Giờ nhập thêm": newHours - oldHours, // The difference (can be negative)
+            "Người nhập": currentUsername,
+            "Ngày nhập": now.toISOString().split("T")[0],
+            "Giờ nhập": now.toTimeString().split(" ")[0],
+            Timestamp: now.toISOString(),
+            "Adjustment Type": "Manual Edit from Student Profile",
+            "Old Total": oldHours,
+            "New Total": newHours,
+            Note: `Hours Extended manually adjusted from ${oldHours}h to ${newHours}h`,
+          };
 
-            try {
-              // Save to Supabase
-              const supabaseLogData = convertToSupabaseFormat(adjustmentLog, "gia_han");
-              const logId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-              supabaseLogData.id = logId;
-              await supabaseSet(`datasheet/Gia_hạn/${logId}`, supabaseLogData);
-              console.log("✅ Adjustment logged to Supabase Extension History");
+          try {
+            // Save to Supabase
+            const supabaseLogData = convertToSupabaseFormat(adjustmentLog, "gia_han");
+            const logId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            supabaseLogData.id = logId;
+            await supabaseSet(`datasheet/Gia_hạn/${logId}`, supabaseLogData);
+            console.log("✅ Adjustment logged to Supabase Extension History");
 
-              // Refresh extension history from Supabase
-              const refreshHistoryData = await supabaseGetAll("datasheet/Gia_hạn");
-              if (refreshHistoryData && typeof refreshHistoryData === 'object') {
-                const historyArray = Object.entries(refreshHistoryData).map(([key, value]: [string, any]) => {
-                  const converted = convertFromSupabaseFormat(value, "gia_han");
-                  return {
-                    id: key,
-                    ...converted,
-                  };
-                });
-                historyArray.sort(
-                  (a, b) =>
-                    new Date(b.Timestamp || b.timestamp || 0).getTime() -
-                    new Date(a.Timestamp || a.timestamp || 0).getTime()
-                );
-                setExtensionHistory(historyArray);
-              }
-            } catch (logError) {
-              console.error("❌ Error logging adjustment:", logError);
-              // Don't fail the whole operation
+            // Refresh extension history from Supabase
+            const refreshHistoryData = await supabaseGetAll("datasheet/Gia_hạn");
+            if (refreshHistoryData && typeof refreshHistoryData === 'object') {
+              const historyArray = Object.entries(refreshHistoryData).map(([key, value]: [string, any]) => {
+                const converted = convertFromSupabaseFormat(value, "gia_han");
+                return {
+                  id: key,
+                  ...converted,
+                };
+              });
+              historyArray.sort(
+                (a, b) =>
+                  new Date(b.Timestamp || b.timestamp || 0).getTime() -
+                  new Date(a.Timestamp || a.timestamp || 0).getTime()
+              );
+              setExtensionHistory(historyArray);
             }
+          } catch (logError) {
+            console.error("❌ Error logging adjustment:", logError);
+            // Don't fail the whole operation
           }
+        }
 
-          // Refresh students from Supabase after update (realtime subscription will also update automatically)
-          const refetchData = await supabaseGetAll("datasheet/Học_sinh");
-          if (refetchData && typeof refetchData === 'object') {
-            const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
-              const converted = convertFromSupabaseFormat(value, "hoc_sinh");
-              return {
-                id: key,
-                ...converted,
-              };
-            });
-            console.log(
-              "🔄 Students refetched after update:",
-              studentsArray.length
-            );
-            setStudents(studentsArray);
-          }
+        // Refresh students from Supabase after update (realtime subscription will also update automatically)
+        const refetchData = await supabaseGetAll("datasheet/Học_sinh");
+        if (refetchData && typeof refetchData === 'object') {
+          const studentsArray = Object.entries(refetchData).map(([key, value]: [string, any]) => {
+            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+            return {
+              id: key,
+              ...converted,
+            };
+          });
+          console.log(
+            "🔄 Students refetched after update:",
+            studentsArray.length
+          );
+          setStudents(studentsArray);
+        }
 
-          setEditModalOpen(false);
-          setEditingStudent(null);
+        setEditModalOpen(false);
+        setEditingStudent(null);
 
-          if (hoursChanged) {
-            message.success(
-              `Học sinh đã cập nhật và thay đổi Giờ mở rộng đã được ghi lại!\nCũ: ${oldHours}h → Mới: ${newHours}h`
-            );
-          } else {
-            message.success("Học sinh đã được cập nhật thành công!");
-          }
-          
+        if (hoursChanged) {
+          message.success(
+            `Học sinh đã cập nhật và thay đổi Giờ mở rộng đã được ghi lại!\nCũ: ${oldHours}h → Mới: ${newHours}h`
+          );
+        } else {
+          message.success("Học sinh đã được cập nhật thành công!");
+        }
+
         // After updating student, update class membership according to selectedClassIds
         try {
           const studentId = studentData.id as string;
-          
-          // Fetch fresh classes data from Firebase to get accurate previousClassIds
-          const freshClassesResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
-          const freshClassesData = await freshClassesResp.json();
-          const freshClasses = freshClassesData 
-            ? Object.entries(freshClassesData).map(([id, cls]: [string, any]) => ({ id, ...cls }))
+
+          // Fetch fresh classes data from Supabase
+          const freshClassesData = await supabaseGetAll("datasheet/Lớp_học");
+          const freshClasses = freshClassesData && typeof freshClassesData === 'object'
+            ? Object.entries(freshClassesData).map(([id, cls]: [string, any]) => {
+                const converted = convertFromSupabaseFormat(cls, "lop_hoc");
+                return { id, ...converted };
+              })
             : [];
-          
+
           // previous classes where student was enrolled (from fresh data)
           const previousClassIds = freshClasses
-            .filter((c: any) => (c["Student IDs"] || []).includes(studentId))
+            .filter((c: any) => {
+              const ids = c["Student IDs"];
+              return Array.isArray(ids) ? ids.includes(studentId) : false;
+            })
             .map((c: any) => c.id);
-          
+
           console.log("📋 Class membership sync:", { studentId, previousClassIds, selectedClassIds });
-          
+
           const toAdd = selectedClassIds.filter((id) => !previousClassIds.includes(id));
           const toRemove = previousClassIds.filter((id: string) => !selectedClassIds.includes(id));
           // Classes that remain (already enrolled and still selected) - need to update enrollment date if provided
@@ -1113,41 +1177,51 @@ const StudentListView: React.FC = () => {
 
           // Add student to new classes
           for (const classId of toAdd) {
-            // Fetch fresh class data from Firebase to avoid stale state issues
-            const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
-            const freshClassData = await freshClassResp.json();
-            if (!freshClassData) continue;
-            
-            const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
+            // Fetch fresh class data from Supabase
+            const freshClassData = await supabaseGetById("datasheet/Lớp_học", classId, true);
+            if (!freshClassData) {
+              console.warn(`⚠️ Class ${classId} not found in database, skipping...`);
+              continue;
+            }
+
+            const studentIdsRaw = freshClassData["Student IDs"] || freshClassData["student_ids"];
+            let currentIds: string[] = [];
+
+            if (Array.isArray(studentIdsRaw)) {
+              currentIds = studentIdsRaw;
+            } else if (studentIdsRaw && typeof studentIdsRaw === "object" && studentIdsRaw !== null) {
+              currentIds = Object.keys(studentIdsRaw).filter(key => (studentIdsRaw as any)[key] === true);
+            }
+
             if (!currentIds.includes(studentId)) {
               const updatedIds = [...currentIds, studentId];
               // Use provided enrollment date or default to today
               const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0];
-              const currentEnrollments = freshClassData["Student Enrollments"] || {};
+              const currentEnrollments = freshClassData["Student Enrollments"] || freshClassData["student_enrollments"] || {};
               const updatedEnrollments = {
                 ...currentEnrollments,
                 [studentId]: { enrollmentDate: dateToUse }
               };
-              const url2 = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
-              await fetch(url2, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                  "Student IDs": updatedIds,
-                  "Student Enrollments": updatedEnrollments
-                }),
+
+              console.log(`📝 Updating class ${classId}:`, {
+                "Student IDs": updatedIds,
+                "Student Enrollments": updatedEnrollments
               });
+
+              await supabaseSet(`datasheet/Lớp_học/${classId}`, {
+                "Student IDs": updatedIds,
+                "Student Enrollments": updatedEnrollments
+              }, { upsert: true });
             }
           }
-          
+
           // Update enrollment date for existing classes (only if enrollmentDate is explicitly provided by user)
           if (enrollmentDate) {
             for (const classId of toUpdateEnrollment) {
-              // Fetch fresh class data from Firebase
-              const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
-              const freshClassData = await freshClassResp.json();
+              // Fetch fresh class data from Supabase
+              const freshClassData = await supabaseGetById("datasheet/Lớp_học", classId, true);
               if (!freshClassData) continue;
-              
+
               const currentEnrollments = freshClassData["Student Enrollments"] || {};
               // Only update if the enrollment date is different
               if (currentEnrollments[studentId]?.enrollmentDate !== enrollmentDate) {
@@ -1155,47 +1229,47 @@ const StudentListView: React.FC = () => {
                   ...currentEnrollments,
                   [studentId]: { enrollmentDate: enrollmentDate }
                 };
-                const url2 = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
-                await fetch(url2, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ 
-                    "Student Enrollments": updatedEnrollments
-                  }),
-                });
+
+                await supabaseSet(`datasheet/Lớp_học/${classId}`, {
+                  "Student Enrollments": updatedEnrollments
+                }, { upsert: true });
               }
             }
           }
           // Remove student from deselected classes
           for (const classId of toRemove) {
-            // Fetch fresh class data from Firebase
-            const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
-            const freshClassData = await freshClassResp.json();
+            const freshClassData = await supabaseGetById("datasheet/Lớp_học", classId, true);
             if (!freshClassData) continue;
-            
-            const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
+
+            const studentIdsRaw = freshClassData["Student IDs"] || freshClassData["student_ids"];
+            let currentIds: string[] = [];
+
+            if (Array.isArray(studentIdsRaw)) {
+              currentIds = studentIdsRaw;
+            } else if (studentIdsRaw && typeof studentIdsRaw === "object" && studentIdsRaw !== null) {
+              currentIds = Object.keys(studentIdsRaw).filter(key => (studentIdsRaw as any)[key] === true);
+            }
+
             if (currentIds.includes(studentId)) {
               const updatedIds = currentIds.filter((sid: string) => sid !== studentId);
-              // Also remove enrollment record for this student
+
+              // Remove from Student Enrollments too
               const currentEnrollments = freshClassData["Student Enrollments"] || {};
-              const { [studentId]: removed, ...remainingEnrollments } = currentEnrollments;
-              
-              const url3 = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
-              await fetch(url3, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                  "Student IDs": updatedIds,
-                  "Student Enrollments": remainingEnrollments
-                }),
-              });
+              const { [studentId]: removed, ...updatedEnrollments } = currentEnrollments;
+
+              await supabaseSet(`datasheet/Lớp_học/${classId}`, {
+                "Student IDs": updatedIds,
+                "Student Enrollments": updatedEnrollments
+              }, { upsert: true });
             }
           }
-          // Refresh classes
-          const resp2 = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
-          const clsData2 = await resp2.json();
+          // Refresh classes from Supabase
+          const clsData2 = await supabaseGetAll("datasheet/Lớp_học");
           if (clsData2) {
-            const classesArray2 = Object.entries(clsData2).map(([id, cls]: [string, any]) => ({ id, ...cls }));
+            const classesArray2 = Object.entries(clsData2).map(([id, cls]: [string, any]) => {
+              const converted = convertFromSupabaseFormat(cls, "lop_hoc");
+              return { id, ...converted };
+            });
             setClasses(classesArray2);
           }
         } catch (err) {
@@ -1235,18 +1309,18 @@ const StudentListView: React.FC = () => {
           ...converted,
         };
       });
-      
+
       setStudents(studentsArray);
-      
-      message.success({ 
-        content: `Đã làm mới danh sách! Tổng: ${studentsArray.length} học sinh`, 
+
+      message.success({
+        content: `Đã làm mới danh sách! Tổng: ${studentsArray.length} học sinh`,
         key: "sync",
-        duration: 3 
+        duration: 3
       });
-      
+
       setSyncingStudents(false);
       return;
-      
+
       // Old sync code below (kept for reference but not used)
       const studentEntries = Object.entries(supabaseStudents);
       console.log(`📥 Found ${studentEntries.length} students in Firebase`);
@@ -1293,7 +1367,7 @@ const StudentListView: React.FC = () => {
           Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
             if (studentDataTyped[firebaseField] !== undefined && studentDataTyped[firebaseField] !== null) {
               let value = studentDataTyped[firebaseField];
-              
+
               // Handle date fields - skip empty strings
               if (supabaseField === "ngay_sinh") {
                 if (typeof value === "string" && value.trim() === "") {
@@ -1316,17 +1390,17 @@ const StudentListView: React.FC = () => {
                   }
                 }
               }
-              
+
               // Convert numeric fields
               if (["so_gio_da_gia_han", "so_gio_con_lai", "so_gio_da_hoc", "diem_so"].includes(supabaseField)) {
                 value = typeof value === "string" ? parseFloat(value) || 0 : (value || 0);
               }
-              
+
               // Set default for trang_thai
               if (supabaseField === "trang_thai") {
                 value = value || "active";
               }
-              
+
               // Only set if value is not empty string
               if (value !== "" && value !== null && value !== undefined) {
                 supabaseData[supabaseField] = value;
@@ -1347,7 +1421,7 @@ const StudentListView: React.FC = () => {
             .select("id")
             .eq("id", studentId)
             .maybeSingle();
-          
+
           // If error is not "not found", log it but continue
           if (checkError && checkError.code !== "PGRST116") {
             console.warn(`Warning checking student ${studentId}:`, checkError);
@@ -1359,7 +1433,7 @@ const StudentListView: React.FC = () => {
               .from("hoc_sinh")
               .update(supabaseData)
               .eq("id", studentId);
-            
+
             if (error) throw error;
             updateCount++;
             console.log(`✅ Updated: ${supabaseData.ho_va_ten || studentId}`);
@@ -1368,7 +1442,7 @@ const StudentListView: React.FC = () => {
             const { error } = await supabaseAdmin
               .from("hoc_sinh")
               .insert(supabaseData);
-            
+
             if (error) throw error;
             insertCount++;
             console.log(`✅ Inserted: ${supabaseData.ho_va_ten || studentId}`);
@@ -1381,10 +1455,10 @@ const StudentListView: React.FC = () => {
         }
       }
 
-      message.success({ 
-        content: `Đồng bộ hoàn tất! Tổng: ${successCount} (Cập nhật: ${updateCount}, Thêm mới: ${insertCount}), Lỗi: ${errorCount}`, 
+      message.success({
+        content: `Đồng bộ hoàn tất! Tổng: ${successCount} (Cập nhật: ${updateCount}, Thêm mới: ${insertCount}), Lỗi: ${errorCount}`,
         key: "sync",
-        duration: 8 
+        duration: 8
       });
 
       // Refresh students list from Supabase
@@ -1401,9 +1475,9 @@ const StudentListView: React.FC = () => {
       }
     } catch (error: any) {
       console.error("Error syncing students:", error);
-      message.error({ 
-        content: `Lỗi khi đồng bộ: ${error.message}`, 
-        key: "sync" 
+      message.error({
+        content: `Lỗi khi đồng bộ: ${error.message}`,
+        key: "sync"
       });
     } finally {
       setSyncingStudents(false);
@@ -1731,7 +1805,7 @@ const StudentListView: React.FC = () => {
       // Generate ID if not provided
       const extensionId = `ext_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       supabaseExtensionData.id = extensionId;
-      
+
       await supabaseSet(`datasheet/Gia_hạn/${extensionId}`, supabaseExtensionData);
       console.log("✅ Extension history saved to Supabase");
 
@@ -1941,13 +2015,13 @@ const StudentListView: React.FC = () => {
             setStarsHistory(historyArray);
           }
 
-            setEditStarsModalOpen(false);
-            setEditingStarsStudent(null);
-            editStarsForm.resetFields();
+          setEditStarsModalOpen(false);
+          setEditingStarsStudent(null);
+          editStarsForm.resetFields();
 
-            message.success(
-              `Đã reset sao thưởng của ${editingStarsStudent["Họ và tên"]} về 0!`
-            );
+          message.success(
+            `Đã reset sao thưởng của ${editingStarsStudent["Họ và tên"]} về 0!`
+          );
         } catch (error) {
           console.error("❌ Error resetting stars:", error);
           message.error("Không reset được sao thưởng. Kiểm tra console để biết chi tiết.");
@@ -3658,7 +3732,7 @@ const StudentListView: React.FC = () => {
                   .map((code) => parseInt(code.replace("HS", "")) || 0);
                 const maxNumber =
                   existingCodes.length > 0 ? Math.max(...existingCodes) : 0;
-                studentCode = `HS${String(maxNumber + 1).padStart(3, "0")} `;
+                studentCode = `HS${String(maxNumber + 1).padStart(3, "0")}`;
               }
 
               const studentData: Partial<Student> = {
@@ -3667,6 +3741,7 @@ const StudentListView: React.FC = () => {
                 "Ngày sinh": values.dob,
                 "Số điện thoại": values.phone,
                 "SĐT phụ huynh": values.parentPhone,
+                "Họ tên phụ huynh": values.parentName,
                 "Địa chỉ": values.address,
                 "Mật khẩu": values.password || "",
                 "Số giờ đã gia hạn": editingStudent?.["Số giờ đã gia hạn"] || 0,
@@ -3678,7 +3753,7 @@ const StudentListView: React.FC = () => {
                 studentData.id = editingStudent.id;
               }
               // Get enrollment date from form (format: YYYY-MM-DD)
-              const enrollmentDateStr = values.enrollmentDate 
+              const enrollmentDateStr = values.enrollmentDate
                 ? dayjs(values.enrollmentDate).format('YYYY-MM-DD')
                 : undefined;
               await handleSaveStudent(studentData, values.registeredSubjects || [], enrollmentDateStr);
@@ -3727,6 +3802,11 @@ const StudentListView: React.FC = () => {
               <Col span={12}>
                 <Form.Item label="SĐT phụ huynh" name="parentPhone">
                   <Input placeholder="Nhập số điện thoại phụ huynh" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Họ tên phụ huynh" name="parentName">
+                  <Input placeholder="Nhập họ tên phụ huynh" />
                 </Form.Item>
               </Col>
               <Col span={12}>
@@ -3837,7 +3917,7 @@ const StudentListView: React.FC = () => {
           footer={null}
           width={500}
           style={{ top: 20 }}
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
         >
           <Form
             form={extendHoursForm}
@@ -3958,7 +4038,7 @@ const StudentListView: React.FC = () => {
           footer={null}
           width={500}
           style={{ top: 20 }}
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
         >
           <div
             style={{
@@ -4438,8 +4518,8 @@ const StudentTuitionTab: React.FC<{
       const studentSessions = allAttendanceSessions.filter((session) => {
         const attendanceRecords = session["Điểm danh"] || [];
         return attendanceRecords.some(
-          (record: any) => record["Student ID"] === studentId && 
-          (record["Trạng thái"] === "present" || record["Trạng thái"] === "absent_with_permission")
+          (record: any) => record["Student ID"] === studentId &&
+            (record["Trạng thái"] === "present" || record["Trạng thái"] === "absent_with_permission")
         );
       });
 

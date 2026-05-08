@@ -3,7 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE, database } from "@/firebase";
 import { ref, onValue, get } from "firebase/database";
-import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat, generateFirebaseId, supabaseSet } from "@/utils/supabaseHelpers";
 import { subjectOptions } from "@/utils/selectOptions";
 import {
   Button,
@@ -241,40 +241,47 @@ const TeacherListView: React.FC = () => {
     return normalizeName(rawName);
   };
 
-  // Fetch teachers
-  useEffect(() => {
-    const fetchTeachers = async () => {
-      try {
-        const response = await fetch(TEACHER_LIST_URL);
-        const data = await response.json();
-        if (data) {
-          const teachersArray = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-          }));
-          setTeachers(teachersArray);
-          console.log("✅ Teachers loaded:", {
-            total: teachersArray.length,
-            sampleTeachers: teachersArray.slice(0, 5).map(t => ({
-              id: t.id,
-              name: getTeacherName(t),
-              "Họ và tên": t["Họ và tên"],
-            })),
-            allTeacherIds: teachersArray.map(t => t.id),
-            teacherNames: teachersArray.map(t => getTeacherName(t)),
-          });
-        }
-      } catch (error) {
-        console.error("Error fetching teachers:", error);
+  const fetchTeachers = async () => {
+    setLoading(true);
+    try {
+      const data = await supabaseGetAll("datasheet/Giáo_viên");
+      if (data) {
+        const teachersArray = Object.entries(data).map(([key, value]: [string, any]) => ({
+          id: key,
+          ...value,
+        }));
+        setTeachers(teachersArray);
+        console.log("✅ Teachers loaded from Supabase:", teachersArray.length);
       }
-    };
+    } catch (error) {
+      console.error("Error fetching teachers from Supabase:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch teachers from Supabase
+  useEffect(() => {
     fetchTeachers();
+
+    // Realtime update for teachers
+    const unsubscribe = supabaseOnValue("datasheet/Giáo_viên", (data) => {
+      if (data) {
+        const teachersArray = Object.entries(data).map(([key, value]: [string, any]) => ({
+          id: key,
+          ...value,
+        }));
+        setTeachers(teachersArray);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Realtime listener cho attendance sessions - tự động update khi điểm danh xong
   useEffect(() => {
     console.log("🎯 Setting up realtime listener for attendance sessions...");
-    
+
     // Force load initial data immediately
     const loadInitial = async () => {
       try {
@@ -308,7 +315,7 @@ const TeacherListView: React.FC = () => {
     };
 
     loadInitial();
-    
+
     // Then set up realtime listener for future updates
     const unsubscribe = supabaseOnValue("datasheet/Điểm_danh_sessions", (data) => {
       if (data) {
@@ -329,7 +336,7 @@ const TeacherListView: React.FC = () => {
         setAttendanceSessions([]);
       }
     });
-    
+
     return () => {
       console.log("🔌 Unsubscribing from attendance sessions listener");
       unsubscribe();
@@ -340,7 +347,14 @@ const TeacherListView: React.FC = () => {
   useEffect(() => {
     const fetchSchedule = async () => {
       try {
-        const response = await fetch(SCHEDULE_URL);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+
+        const response = await fetch(SCHEDULE_URL, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
         const data = await response.json();
         if (data) {
           let eventsArray = Object.keys(data).map((key) => ({
@@ -376,7 +390,11 @@ const TeacherListView: React.FC = () => {
           console.log("✅ Schedule events loaded:", eventsArray.length);
         }
       } catch (error) {
-        console.error("Error fetching schedule:", error);
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.error("⏱️ Timeout fetching schedule (10s)");
+        } else {
+          console.error("Error fetching schedule:", error);
+        }
       }
     };
     fetchSchedule();
@@ -405,7 +423,7 @@ const TeacherListView: React.FC = () => {
   // Realtime listener cho lớp học để lấy Lương GV mới nhất
   useEffect(() => {
     console.log("🎯 Setting up realtime listener for classes...");
-    
+
     // Set up realtime listener for classes
     const unsubscribe = supabaseOnValue("datasheet/Lớp_học", (data) => {
       if (data && typeof data === "object") {
@@ -422,7 +440,7 @@ const TeacherListView: React.FC = () => {
         setClasses([]);
       }
     });
-    
+
     return () => unsubscribe();
   }, []);
 
@@ -435,16 +453,16 @@ const TeacherListView: React.FC = () => {
     const normalizedTeacherId = String(teacherId || "").trim();
     const teacher = teachers.find(t => t.id === teacherId);
     const teacherName = teacher ? getTeacherName(teacher) : "";
-    
+
     // Lấy các sessions của giáo viên
     const teacherSessions = attendanceSessions.filter((session) => {
       const sessionTeacher = session["Teacher ID"];
       const normalizedSessionTeacher = String(sessionTeacher || "").trim();
       const sessionTeacherName = session["Giáo viên"] || "";
-      
-      return normalizedSessionTeacher === normalizedTeacherId || 
-             (teacherName && sessionTeacherName && 
-              String(teacherName).trim() === String(sessionTeacherName).trim());
+
+      return normalizedSessionTeacher === normalizedTeacherId ||
+        (teacherName && sessionTeacherName &&
+          String(teacherName).trim() === String(sessionTeacherName).trim());
     });
 
     // Filter theo ngày nếu cần
@@ -496,9 +514,9 @@ const TeacherListView: React.FC = () => {
     const normalizedTeacherId = String(teacherId || "").trim();
     const teacher = teachers.find(t => t.id === teacherId);
     const teacherName = teacher ? getTeacherName(teacher) : "";
-    
+
     console.log(`   Teacher info:`, { id: teacherId, name: teacherName });
-    
+
     // Lấy các sessions của giáo viên (ưu tiên completed, fallback khi chưa gắn trạng thái)
     const teacherSessions = attendanceSessions.filter((session) => {
       const sessionTeacher = session["Teacher ID"];
@@ -506,11 +524,11 @@ const TeacherListView: React.FC = () => {
       const sessionTeacherName = session["Giáo viên"] || "";
       const status = session["Trạng thái"];
       const isCompleted = status === "completed" || status === "completed_session" || !status;
-      
+
       const matchById = normalizedSessionTeacher === normalizedTeacherId;
-      const matchByName = teacherName && sessionTeacherName && 
-                         String(teacherName).trim() === String(sessionTeacherName).trim();
-      
+      const matchByName = teacherName && sessionTeacherName &&
+        String(teacherName).trim() === String(sessionTeacherName).trim();
+
       return isCompleted && (matchById || matchByName);
     });
 
@@ -596,7 +614,7 @@ const TeacherListView: React.FC = () => {
       salaryPerSession: data.salaryPerSession,
       totalSalary: data.totalSalary,
     }));
-    
+
     console.log(`   ✅ Result: ${result.length} classes`, result);
     return result;
   };
@@ -610,20 +628,20 @@ const TeacherListView: React.FC = () => {
   ): number => {
     // Normalize teacher ID for comparison
     const normalizedTeacherId = String(teacherId || "").trim();
-    
+
     const teacherSessions = attendanceSessions.filter((session) => {
       const sessionTeacher = session["Teacher ID"];
       // Normalize session teacher ID for comparison
       const normalizedSessionTeacher = String(sessionTeacher || "").trim();
-      
+
       // Also check if teacher name matches (some sessions might use name instead of ID)
       const teacher = teachers.find(t => t.id === teacherId);
       const teacherName = teacher ? getTeacherName(teacher) : "";
       const sessionTeacherName = session["Giáo viên"] || "";
-      
-      return normalizedSessionTeacher === normalizedTeacherId || 
-             (teacherName && sessionTeacherName && 
-              String(teacherName).trim() === String(sessionTeacherName).trim());
+
+      return normalizedSessionTeacher === normalizedTeacherId ||
+        (teacherName && sessionTeacherName &&
+          String(teacherName).trim() === String(sessionTeacherName).trim());
     });
 
     let filteredSessions = teacherSessions;
@@ -655,15 +673,15 @@ const TeacherListView: React.FC = () => {
       const sessionTeacher = session["Teacher ID"];
       // Normalize session teacher ID for comparison
       const normalizedSessionTeacher = String(sessionTeacher || "").trim();
-      
+
       // Also check if teacher name matches (some sessions might use name instead of ID)
       const teacher = teachers.find(t => t.id === teacherId);
       const teacherName = teacher ? getTeacherName(teacher) : "";
       const sessionTeacherName = session["Giáo viên"] || "";
-      
-      return normalizedSessionTeacher === normalizedTeacherId || 
-             (teacherName && sessionTeacherName && 
-              String(teacherName).trim() === String(sessionTeacherName).trim());
+
+      return normalizedSessionTeacher === normalizedTeacherId ||
+        (teacherName && sessionTeacherName &&
+          String(teacherName).trim() === String(sessionTeacherName).trim());
     });
 
     console.log(`  Found ${teacherSessions.length} sessions total`);
@@ -720,7 +738,7 @@ const TeacherListView: React.FC = () => {
     const teacher = teachers.find(t => t.id === teacherId);
     const teacherName = teacher ? getTeacherName(teacher) : "";
     const teacherEmail = teacher ? (teacher["Email"] || teacher["Email công ty"] || "") : "";
-    
+
     console.log("🔍 getTeacherEventsByMonth called with:", {
       teacherId,
       teacherName,
@@ -733,7 +751,7 @@ const TeacherListView: React.FC = () => {
     const filtered = attendanceSessions.filter((session) => {
       const sessionTeacherId = session["Teacher ID"];
       const sessionTeacherName = session["Giáo viên"] || "";
-      
+
       // Debug: Log first few sessions to see Teacher ID format
       if (attendanceSessions.indexOf(session) < 3) {
         console.log("📋 Sample session:", {
@@ -752,13 +770,13 @@ const TeacherListView: React.FC = () => {
       const normalizedTeacherId = String(teacherId || "").trim();
       const normalizedSessionTeacherName = String(sessionTeacherName || "").trim();
       const normalizedTeacherName = String(teacherName || "").trim();
-      
+
       // Match by Teacher ID or by Teacher Name
       const matchesById = normalizedSessionTeacherId === normalizedTeacherId;
-      const matchesByName = normalizedTeacherName && 
-                           normalizedSessionTeacherName && 
-                           normalizedSessionTeacherName === normalizedTeacherName;
-      
+      const matchesByName = normalizedTeacherName &&
+        normalizedSessionTeacherName &&
+        normalizedSessionTeacherName === normalizedTeacherName;
+
       if (!matchesById && !matchesByName) {
         return false;
       }
@@ -838,9 +856,9 @@ const TeacherListView: React.FC = () => {
       startDate,
       endDate,
     });
-    console.log("👥 All teacher IDs:", teachers.map(t => ({ 
-      id: t.id, 
-      name: getTeacherName(t) 
+    console.log("👥 All teacher IDs:", teachers.map(t => ({
+      id: t.id,
+      name: getTeacherName(t)
     })).slice(0, 5));
 
     let filtered = teachers;
@@ -903,15 +921,15 @@ const TeacherListView: React.FC = () => {
     // Tạo danh sách hiển thị GOM THEO GIÁO VIÊN
     // Mỗi giáo viên chỉ có 1 dòng, hiển thị tất cả các lớp họ dạy
     const result: any[] = [];
-    
+
     filtered.forEach((teacher) => {
       const fromDate = startDate ? new Date(startDate) : undefined;
       const toDate = endDate ? new Date(endDate) : undefined;
       const stats = calculateTeacherHours(teacher.id, fromDate, toDate);
-      
+
       // Tính lương theo từng LỚP HỌC
       const classStats = calculateSalaryByClass(teacher.id, fromDate, toDate);
-      
+
       if (classStats.length === 0) {
         // Giáo viên chưa có buổi dạy nào
         result.push({
@@ -928,7 +946,7 @@ const TeacherListView: React.FC = () => {
         const totalSessions = classStats.reduce((sum, c) => sum + c.totalSessions, 0);
         const totalSalary = classStats.reduce((sum, c) => sum + c.totalSalary, 0);
         const avgSalaryPerSession = totalSessions > 0 ? Math.round(totalSalary / totalSessions) : 0;
-        
+
         result.push({
           ...teacher,
           ...stats,
@@ -940,7 +958,7 @@ const TeacherListView: React.FC = () => {
         });
       }
     });
-    
+
     console.log(`✅ displayTeachers result: ${result.length} teachers`);
     if (result.length > 0) {
       console.log(`   Sample teacher:`, {
@@ -950,7 +968,7 @@ const TeacherListView: React.FC = () => {
         totalSalary: result[0].totalSalary,
       });
     }
-    
+
     return result;
   }, [
     teachers,
@@ -998,7 +1016,7 @@ const TeacherListView: React.FC = () => {
         ),
         totalHours: Math.floor(
           displayTeachers.reduce((sum, t) => sum + t.hours * 60 + t.minutes, 0) /
-            60
+          60
         ),
       };
     },
@@ -1023,10 +1041,14 @@ const TeacherListView: React.FC = () => {
       cancelText: "Huỷ",
       onOk: async () => {
         try {
-          const url = `${DATABASE_URL_BASE}/datasheet/datasheet/Gi%C3%A1o_vi%C3%AAn/${teacher.id}.json`;
+          const url = `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn/${teacher.id}.json`;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
           const response = await fetch(url, {
             method: "DELETE",
+            signal: controller.signal,
           });
+          clearTimeout(timeout);
           if (response.ok) {
             setTeachers(teachers.filter((t) => t.id !== teacher.id));
             Modal.success({ content: "Xoá giáo viên thành công!" });
@@ -1065,9 +1087,9 @@ const TeacherListView: React.FC = () => {
         }
       }
 
-      // Auto-generate Teacher Code if adding new teacher
-      let teacherCode = editingTeacher?.["Mã giáo viên"] || "";
-      if (isNew) {
+      // Auto-generate Teacher Code if adding new teacher or if missing
+      let teacherCode = editingTeacher?.["Mã giáo viên"] || editingTeacher?.ma_giao_vien || "";
+      if (isNew || !teacherCode) {
         const existingCodes = teachers
           .map((t) => t["Mã giáo viên"])
           .filter((code) => code && code.startsWith("GV"))
@@ -1077,7 +1099,10 @@ const TeacherListView: React.FC = () => {
         teacherCode = `GV${String(maxNumber + 1).padStart(3, "0")}`;
       }
 
-      const teacherData: Partial<Teacher> = {
+      const teacherId = isNew ? generateFirebaseId() : editingTeacher.id;
+
+      const teacherData: any = {
+        id: teacherId,
         "Họ và tên": values.name,
         "Mã giáo viên": teacherCode,
         SĐT: values.phone,
@@ -1090,78 +1115,19 @@ const TeacherListView: React.FC = () => {
         "Lương theo buổi": values.salaryPerSession || 0,
       };
 
-      // Only update password if a new one is provided
       if (values.password && values.password.trim()) {
         teacherData["Password"] = values.password.trim();
       }
 
-      // Preserve the ID if editing an existing teacher
-      if (editingTeacher?.id) {
-        teacherData.id = editingTeacher.id;
-      }
+      console.log(`📤 ${isNew ? "Adding" : "Updating"} teacher to Supabase:`, teacherData);
 
-      if (isNew) {
-        // Add new teacher
-        console.log("📤 Adding new teacher to Firebase:", teacherData);
-        const response = await fetch(TEACHER_LIST_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(teacherData),
-        });
+      await supabaseSet("datasheet/Giáo_viên", teacherData, { upsert: true, onConflict: "id" });
 
-        if (response.ok) {
-          const data = await response.json();
-          console.log("✅ Teacher added to Firebase:", data);
-          const newTeacher = { id: data.name, ...teacherData } as Teacher;
-          setTeachers([...teachers, newTeacher]);
-          setEditModalOpen(false);
-          setEditingTeacher(null);
-          form.resetFields();
-          Modal.success({ content: "Thêm giáo viên thành công!" });
-        } else {
-          const errorText = await response.text();
-          console.error(
-            "❌ Lưu giáo viên thất bại. Mã lỗi:",
-            response.status,
-            errorText
-          );
-          Modal.error({
-            content: `Lưu giáo viên thất bại. Mã lỗi: ${response.status}`,
-          });
-        }
-      } else {
-        // Update existing teacher
-        const url = `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn/${teacherData.id}.json`;
-        console.log("📤 Updating teacher:", teacherData.id, teacherData);
-        const response = await fetch(url, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(teacherData),
-        });
-
-        if (response.ok) {
-          console.log("✅ Teacher updated in Firebase successfully");
-          setTeachers(
-            teachers.map((t) =>
-              t.id === teacherData.id ? { ...t, ...teacherData } : t
-            )
-          );
-          setEditModalOpen(false);
-          setEditingTeacher(null);
-          form.resetFields();
-          Modal.success({ content: "Cập nhật thành công!" });
-        } else {
-          const errorText = await response.text();
-          console.error(
-            "❌ Cập nhật giáo viên thất bại. Mã lỗi:",
-            response.status,
-            errorText
-          );
-          Modal.error({
-            content: `Cập nhật giáo viên thất bại. Mã lỗi: ${response.status}`,
-          });
-        }
-      }
+      message.success(isNew ? "Thêm giáo viên thành công!" : "Cập nhật thành công!");
+      await fetchTeachers(); // Cập nhật lại danh sách ngay lập tức
+      setEditModalOpen(false);
+      setEditingTeacher(null);
+      form.resetFields();
     } catch (error) {
       console.error("Error saving teacher:", error);
       Modal.error({ content: "Lưu giáo viên thất bại: " + error });
@@ -1390,21 +1356,18 @@ const TeacherListView: React.FC = () => {
                     </div>
                     <div class="info-item">
                         <span class="info-label">Số điện thoại:</span>
-                        <span class="info-value">${
-                          teacher["SĐT"] || teacher["Số điện thoại"] || "N/A"
-                        }</span>
+                        <span class="info-value">${teacher["SĐT"] || teacher["Số điện thoại"] || "N/A"
+      }</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">Email:</span>
-                        <span class="info-value">${
-                          teacher["Email"] || teacher["Email công ty"] || "N/A"
-                        }</span>
+                        <span class="info-value">${teacher["Email"] || teacher["Email công ty"] || "N/A"
+      }</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">Tình trạng việc làm:</span>
-                        <span class="info-value">${
-                          teacher["Biên chế"] || "N/A"
-                        }</span>
+                        <span class="info-value">${teacher["Biên chế"] || "N/A"
+      }</span>
                     </div>
                 </div>
 
@@ -1412,21 +1375,18 @@ const TeacherListView: React.FC = () => {
                     <div class="summary-title">BÁO CÁO GIỜ GIẢNG DẠY</div>
                     <div class="summary-grid">
                         <div class="summary-item">
-                            <div class="summary-value">${
-                              totalHours.totalSessions
-                            }</div>
+                            <div class="summary-value">${totalHours.totalSessions
+      }</div>
                             <div class="summary-label">Total Sessions</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-value">${totalHours.hours}h ${
-                              totalHours.minutes
-                            }m</div>
+                            <div class="summary-value">${totalHours.hours}h ${totalHours.minutes
+      }m</div>
                             <div class="summary-label">Total Time</div>
                         </div>
                         <div class="summary-item">
-                            <div class="summary-value">${
-                              events.length > 0 ? "Active" : "Inactive"
-                            }</div>
+                            <div class="summary-value">${events.length > 0 ? "Active" : "Inactive"
+      }</div>
                             <div class="summary-label">Trạng thái</div>
                         </div>
                     </div>
@@ -1446,38 +1406,38 @@ const TeacherListView: React.FC = () => {
                     </thead>
                     <tbody>
                         ${events
-                          .map((event, index) => {
-                            const start = event["Giờ bắt đầu"];
-                            const end = event["Giờ kết thúc"];
-                            let duration = "-";
-                            if (start && end) {
-                              const [startH, startM] = start
-                                .split(":")
-                                .map(Number);
-                              const [endH, endM] = end.split(":").map(Number);
-                              const totalMinutes =
-                                endH * 60 + endM - (startH * 60 + startM);
-                              const hours = Math.floor(totalMinutes / 60);
-                              const minutes = totalMinutes % 60;
-                              duration =
-                                minutes > 0
-                                  ? hours + "h " + minutes + "p"
-                                  : hours + "h";
-                            }
-                            return `
+        .map((event, index) => {
+          const start = event["Giờ bắt đầu"];
+          const end = event["Giờ kết thúc"];
+          let duration = "-";
+          if (start && end) {
+            const [startH, startM] = start
+              .split(":")
+              .map(Number);
+            const [endH, endM] = end.split(":").map(Number);
+            const totalMinutes =
+              endH * 60 + endM - (startH * 60 + startM);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+            duration =
+              minutes > 0
+                ? hours + "h " + minutes + "p"
+                : hours + "h";
+          }
+          return `
                             <tr>
                                 <td>${index + 1}</td>
                                 <td>${new Date(
-                                  event["Ngày"]
-                                ).toLocaleDateString("vi-VN")}</td>
+            event["Ngày"]
+          ).toLocaleDateString("vi-VN")}</td>
                                 <td>${start} - ${end}</td>
                                 <td style="font-weight: bold;">${duration}</td>
                                 <td>${event["Tên công việc"]}</td>
                                 <td>${event["Học sinh"] || "N/A"}</td>
                             </tr>
                             `;
-                          })
-                          .join("")}
+        })
+        .join("")}
                     </tbody>
                 </table>
 
@@ -1494,8 +1454,8 @@ const TeacherListView: React.FC = () => {
 
                 <p style="text-align: center; margin-top: 30px; color: #666; font-size: 12px;">
                     Xuất phiếu ngày: ${new Date().toLocaleDateString(
-                      "vi-VN"
-                    )} - Trí Tuệ 8+
+          "vi-VN"
+        )} - Trí Tuệ 8+
                 </p>
             </body>
             </html>
@@ -1791,9 +1751,9 @@ const TeacherListView: React.FC = () => {
                   return (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {teacher.classes.map((classData: any, idx: number) => (
-                        <div key={idx} style={{ 
-                          padding: "4px 8px", 
-                          background: "#f0f5ff", 
+                        <div key={idx} style={{
+                          padding: "4px 8px",
+                          background: "#f0f5ff",
                           borderRadius: 4,
                           borderLeft: "3px solid #1890ff"
                         }}>
@@ -1819,6 +1779,20 @@ const TeacherListView: React.FC = () => {
                         </div>
                       ))}
                     </div>
+                  );
+                },
+              },
+              {
+                title: "Vị trí",
+                key: "position",
+                width: 120,
+                render: (_: any, teacher: any) => {
+                  const position = teacher["Vị trí"] || "Teacher";
+                  const isAdmin = position === "Admin";
+                  return (
+                    <Tag color={isAdmin ? "volcano" : "blue"}>
+                      {isAdmin ? "Quản trị viên" : "Giáo viên"}
+                    </Tag>
                   );
                 },
               },
@@ -2054,14 +2028,14 @@ const TeacherListView: React.FC = () => {
                           }
                         });
                       }
-                      
+
                       // Get class name
                       const className = event["Tên lớp"] || event["Mã lớp"] || "N/A";
-                      
+
                       // Format time properly
                       const startTime = event["Giờ bắt đầu"] || "N/A";
                       const endTime = event["Giờ kết thúc"] || "N/A";
-                      
+
                       return (
                         <Card
                           key={idx}
@@ -2084,8 +2058,8 @@ const TeacherListView: React.FC = () => {
                             </Col>
                             <Col span={12}>
                               <Text type="secondary">
-                                {studentNames.length > 0 
-                                  ? studentNames.join(", ") 
+                                {studentNames.length > 0
+                                  ? studentNames.join(", ")
                                   : event["Học sinh"] || "N/A"}
                               </Text>
                             </Col>

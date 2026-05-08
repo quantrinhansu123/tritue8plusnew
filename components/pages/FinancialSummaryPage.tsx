@@ -148,13 +148,13 @@ const FinancialSummaryPage = () => {
   // Function to add new category
   const addExpenseCategory = (newCategory: string) => {
     if (!newCategory || newCategory.trim() === "") return;
-    
+
     const trimmedCategory = newCategory.trim();
     if (expenseCategories.includes(trimmedCategory)) return;
 
     const updatedCategories = [...expenseCategories, trimmedCategory];
     setExpenseCategories(updatedCategories);
-    
+
     // Save custom categories to localStorage (only new ones, not base ones)
     const customCategories = updatedCategories.filter(
       (cat) => !baseExpenseCategories.includes(cat)
@@ -168,7 +168,14 @@ const FinancialSummaryPage = () => {
       const converted = convertFromSupabaseFormat(data, "phieu_thu_hoc_phi");
       console.log("🔥 Supabase student invoices loaded:", converted);
       if (converted) {
-        setStudentInvoices(converted);
+        // Convert month from 1-12 (DB) to 0-11 (JS)
+        const standardizedData: Record<string, any> = {};
+        Object.entries(converted as Record<string, any>).forEach(([key, invoice]) => {
+          let month = invoice.month !== undefined ? invoice.month : 0;
+          if (month >= 1 && month <= 12) month -= 1;
+          standardizedData[key] = { ...invoice, month };
+        });
+        setStudentInvoices(standardizedData);
       }
       setLoading(false);
     });
@@ -302,13 +309,13 @@ const FinancialSummaryPage = () => {
     return attendanceSessions.filter((session) => {
       const status = session["Trạng thái"];
       const isCompleted = status === "completed" || status === "completed_session" || !status;
-      
+
       if (!isCompleted || !session["Ngày"]) return false;
-      
+
       const sessionDate = new Date(session["Ngày"]);
       const sessionMonth = sessionDate.getMonth();
       const sessionYear = sessionDate.getFullYear();
-      
+
       if (viewMode === "year") {
         return sessionYear === selectedYear;
       } else {
@@ -339,7 +346,7 @@ const FinancialSummaryPage = () => {
     filteredSessions.forEach((session) => {
       const classId = session["Class ID"];
       const classData = classes.find(c => c.id === classId);
-      
+
       if (!classData) return;
 
       // Lấy giáo viên phụ trách từ lớp, không phải từ session
@@ -419,10 +426,10 @@ const FinancialSummaryPage = () => {
     // Process all invoices
     Object.values(studentInvoices).forEach((invoice: any) => {
       if (!invoice || typeof invoice !== "object") return;
-      
+
       const invoiceMonth = invoice.month ?? 0;
       const invoiceYear = invoice.year ?? 0;
-      
+
       // Filter by selected period
       if (viewMode === "year") {
         if (invoiceYear !== selectedYear) return;
@@ -434,23 +441,34 @@ const FinancialSummaryPage = () => {
       const invoiceTotalSessions = invoice.totalSessions || 0;
       const invoiceTotalAmount = invoice.totalAmount || 0;
       const studentId = invoice.studentId;
-      
+
       if (invoiceTotalSessions === 0 || invoiceTotalAmount === 0) return;
 
       // Get classes from invoice sessions to distribute the amount
       const invoiceSessions = invoice.sessions || [];
       const classDistribution: Record<string, { sessions: number; amount: number }> = {};
-      
-      // Count sessions per class from invoice sessions
-      invoiceSessions.forEach((session: any) => {
-        const classId = session["Class ID"];
-        if (!classId) return;
-        
-        if (!classDistribution[classId]) {
-          classDistribution[classId] = { sessions: 0, amount: 0 };
+
+      if (invoiceSessions && invoiceSessions.length > 0) {
+        // Count sessions per class from invoice sessions
+        invoiceSessions.forEach((session: any) => {
+          const classId = session["Class ID"] || session.classId || session.class_id;
+          if (!classId) return;
+
+          if (!classDistribution[classId]) {
+            classDistribution[classId] = { sessions: 0, amount: 0 };
+          }
+          classDistribution[classId].sessions += 1;
+        });
+      } else {
+        // Nếu không có sessions (dữ liệu từ Supabase), sử dụng class_id trực tiếp của invoice
+        const classId = invoice.class_id || invoice.classId;
+        if (classId) {
+          classDistribution[classId] = {
+            sessions: invoiceTotalSessions,
+            amount: invoiceTotalAmount,
+          };
         }
-        classDistribution[classId].sessions += 1;
-      });
+      }
 
       // Calculate average price per session for this invoice
       const avgPricePerSession = invoiceTotalAmount / invoiceTotalSessions;
@@ -461,7 +479,7 @@ const FinancialSummaryPage = () => {
         if (!classData) return;
 
         const className = classData["Tên lớp"] || classData["Mã lớp"] || "Không xác định";
-        
+
         // Get price per session from class for display
         const course = courses.find((c) => {
           if (c["Khối"] !== classData["Khối"]) return false;
@@ -476,7 +494,7 @@ const FinancialSummaryPage = () => {
           }
           return false;
         });
-        
+
         const pricePerSession = course?.Giá || parseSalaryValue(classData["Học phí mỗi buổi"]) || avgPricePerSession;
 
         if (!classRevenueMap[classId]) {
@@ -509,7 +527,7 @@ const FinancialSummaryPage = () => {
     const totalRevenueFromTable = result.reduce((sum, item) => sum + item.totalRevenue, 0);
     const totalSessionsFromTable = result.reduce((sum, item) => sum + item.totalSessions, 0);
     const totalStudentsFromTable = result.reduce((sum, item) => sum + item.totalStudents, 0);
-    
+
     console.log("📊 Revenue by Class (from invoices):", {
       totalRevenue: totalRevenueFromTable,
       totalSessions: totalSessionsFromTable,
@@ -520,31 +538,51 @@ const FinancialSummaryPage = () => {
     return result;
   }, [studentInvoices, classes, courses, selectedMonth, selectedYear, viewMode]);
 
-  // Calculate total revenue from attendance sessions
+  // Calculate total revenue from student invoices (Thực thu)
   const totalRevenue = useMemo(() => {
-    return Math.round(revenueByClass.reduce((sum, classRev) => sum + classRev.totalRevenue, 0));
-  }, [revenueByClass]);
+    let total = 0;
+    Object.values(studentInvoices).forEach((invoice: any) => {
+      if (!invoice || typeof invoice !== "object") return;
 
-  // Calculate total revenue from student invoices (for comparison)
+      const invoiceMonth = invoice.month ?? 0;
+      const invoiceYear = invoice.year ?? 0;
+      const isPaid = (invoice.status || "").toLowerCase() === "paid";
+
+      // Filter by selected period and MUST be paid
+      if (viewMode === "year") {
+        if (invoiceYear === selectedYear && isPaid) {
+          total += invoice.finalAmount || 0;
+        }
+      } else {
+        if (invoiceMonth === selectedMonth && invoiceYear === selectedYear && isPaid) {
+          total += invoice.finalAmount || 0;
+        }
+      }
+    });
+
+    return Math.round(total);
+  }, [studentInvoices, selectedMonth, selectedYear, viewMode]);
+
+  // Calculate total expected revenue (Dự kiến thu - for comparison)
   const totalRevenueFromInvoices = useMemo(() => {
     let total = 0;
     Object.values(studentInvoices).forEach((invoice: any) => {
       if (!invoice || typeof invoice !== "object") return;
-      
+
       const invoiceMonth = invoice.month ?? 0;
       const invoiceYear = invoice.year ?? 0;
-      
+
       // Filter by selected period
       if (viewMode === "year") {
         if (invoiceYear !== selectedYear) return;
       } else {
         if (invoiceMonth !== selectedMonth || invoiceYear !== selectedYear) return;
       }
-      
-      // Add totalAmount (before discount)
-      total += invoice.totalAmount || 0;
+
+      // Add finalAmount (what we expect to receive)
+      total += invoice.finalAmount || 0;
     });
-    
+
     return Math.round(total);
   }, [studentInvoices, selectedMonth, selectedYear, viewMode]);
 
@@ -553,21 +591,21 @@ const FinancialSummaryPage = () => {
     let discount = 0;
     Object.values(studentInvoices).forEach((invoice: any) => {
       if (!invoice || typeof invoice !== "object") return;
-      
+
       const invoiceMonth = invoice.month ?? 0;
       const invoiceYear = invoice.year ?? 0;
-      
+
       // Filter by selected period
       if (viewMode === "year") {
         if (invoiceYear !== selectedYear) return;
       } else {
         if (invoiceMonth !== selectedMonth || invoiceYear !== selectedYear) return;
       }
-      
+
       // Add discount amount
       discount += invoice.discount || 0;
     });
-    
+
     return Math.round(discount);
   }, [studentInvoices, selectedMonth, selectedYear, viewMode]);
 
@@ -586,12 +624,12 @@ const FinancialSummaryPage = () => {
         )
         .reduce((sum, expense) => sum + expense.amount, 0);
     }
-    
-    // Add teacher salaries and discount from invoices to total expenses
-    const total = Math.round(manualExpenses + totalTeacherSalaries + totalDiscount);
-    console.log("📊 Total expenses:", { manualExpenses, totalTeacherSalaries, totalDiscount, total });
+
+    // Add teacher salaries to total expenses (Discount is now handled by using finalAmount in revenue)
+    const total = Math.round(manualExpenses + totalTeacherSalaries);
+    console.log("📊 Total expenses:", { manualExpenses, totalTeacherSalaries, total });
     return total;
-  }, [expenses, totalTeacherSalaries, totalDiscount, selectedMonth, selectedYear, viewMode]);
+  }, [expenses, totalTeacherSalaries, selectedMonth, selectedYear, viewMode]);
 
   // Net profit/loss
   const netProfit = Math.round(totalRevenue - totalExpenses);
@@ -607,7 +645,7 @@ const FinancialSummaryPage = () => {
       attendanceRecords.forEach((record: any) => {
         const studentId = record["Student ID"];
         const isPresent = record["Có mặt"] === true || record["Có mặt"] === "true";
-        
+
         // Chỉ tính học sinh có mặt thực sự, không tính vắng có phép
         if (studentId && isPresent) {
           attendedStudents.add(studentId);
@@ -618,17 +656,17 @@ const FinancialSummaryPage = () => {
     // Collect all students who have invoices
     Object.values(studentInvoices).forEach((invoice: any) => {
       if (!invoice || typeof invoice !== "object") return;
-      
+
       const invoiceMonth = invoice.month ?? 0;
       const invoiceYear = invoice.year ?? 0;
-      
+
       // Filter by selected period
       if (viewMode === "year") {
         if (invoiceYear !== selectedYear) return;
       } else {
         if (invoiceMonth !== selectedMonth || invoiceYear !== selectedYear) return;
       }
-      
+
       if (invoice.studentId) {
         studentsWithInvoices.add(invoice.studentId);
       }
@@ -646,11 +684,11 @@ const FinancialSummaryPage = () => {
     attendedStudents.forEach((studentId) => {
       if (!studentsWithInvoices.has(studentId)) {
         const student = students.find(s => s.id === studentId);
-        
+
         // Count sessions for this student
         let sessionsCount = 0;
         const classSet = new Set<string>();
-        
+
         filteredSessions.forEach((session) => {
           const attendanceRecords = session["Điểm danh"] || [];
           const hasAttended = attendanceRecords.some((record: any) => {
@@ -659,7 +697,7 @@ const FinancialSummaryPage = () => {
             // Chỉ tính học sinh có mặt thực sự
             return recordStudentId === studentId && isPresent;
           });
-          
+
           if (hasAttended) {
             sessionsCount++;
             const classId = session["Class ID"];
@@ -703,17 +741,17 @@ const FinancialSummaryPage = () => {
       }
       grouped[expense.category] += expense.amount;
     });
-    
+
     // Add teacher salaries as a separate category
     if (totalTeacherSalaries > 0) {
       grouped["Lương giáo viên (Từ điểm danh)"] = totalTeacherSalaries;
     }
-    
+
     // Add discount from invoices as a separate category (auto expense)
     if (totalDiscount > 0) {
       grouped["Tiền miễn giảm (Từ hóa đơn)"] = totalDiscount;
     }
-    
+
     return Object.entries(grouped).map(([category, amount]) => ({
       category,
       amount,
@@ -723,7 +761,7 @@ const FinancialSummaryPage = () => {
   // Sync invoices from attendance sessions (delete all unpaid and recreate from attendance)
   const syncInvoicesFromSessions = async () => {
     if (syncingInvoices) return;
-    
+
     try {
       setSyncingInvoices(true);
       message.loading("Đang xóa và tạo lại hóa đơn từ điểm danh...", 0);
@@ -732,11 +770,11 @@ const FinancialSummaryPage = () => {
       const invoicesToDelete: string[] = [];
       Object.entries(studentInvoices).forEach(([key, invoice]: [string, any]) => {
         if (!invoice || typeof invoice !== "object") return;
-        
+
         const invoiceMonth = invoice.month ?? 0;
         const invoiceYear = invoice.year ?? 0;
         const invoiceStatus = invoice.status || "unpaid";
-        
+
         // Check if invoice is in selected period
         let matchesPeriod = false;
         if (viewMode === "year") {
@@ -744,7 +782,7 @@ const FinancialSummaryPage = () => {
         } else {
           matchesPeriod = invoiceMonth === selectedMonth && invoiceYear === selectedYear;
         }
-        
+
         // Add to delete list if unpaid and matches period
         if (matchesPeriod && invoiceStatus !== "paid") {
           invoicesToDelete.push(key);
@@ -772,7 +810,7 @@ const FinancialSummaryPage = () => {
       filteredSessions.forEach((session) => {
         const classId = session["Class ID"];
         const classData = classes.find(c => c.id === classId);
-        
+
         if (!classData || !session["Ngày"]) return;
 
         // Get price per session
@@ -789,7 +827,7 @@ const FinancialSummaryPage = () => {
           }
           return false;
         });
-        
+
         const pricePerSession = course?.Giá || parseSalaryValue(classData["Học phí mỗi buổi"]);
         if (!pricePerSession) return;
 
@@ -818,11 +856,11 @@ const FinancialSummaryPage = () => {
           if (!student) return;
 
           const invoiceKey = `${studentId}-${sessionMonth}-${sessionYear}`;
-          
+
           // Check if invoice was paid (we need to preserve paid invoices)
           const existingInvoice = studentInvoices[invoiceKey];
-          const existingStatus = typeof existingInvoice === "object" && existingInvoice !== null 
-            ? existingInvoice.status 
+          const existingStatus = typeof existingInvoice === "object" && existingInvoice !== null
+            ? existingInvoice.status
             : existingInvoice;
           const isPaid = existingStatus === "paid";
 
@@ -928,7 +966,7 @@ const FinancialSummaryPage = () => {
   const handleExpenseSubmit = async (values: any) => {
     try {
       let invoiceImageData = editingExpense?.invoiceImage || "";
-      
+
       // If there's a new image uploaded
       if (fileList.length > 0 && fileList[0].originFileObj) {
         invoiceImageData = await getBase64(fileList[0].originFileObj as File);
@@ -989,7 +1027,7 @@ const FinancialSummaryPage = () => {
         return;
       } catch (sdkError: any) {
         console.warn("Firebase SDK delete failed, trying REST API:", sdkError);
-        
+
         // Fallback: Use REST API
         const deleteUrl = `${DATABASE_URL_BASE}/datasheet/Chi_phí_vận_hành/${encodeURIComponent(expenseId)}.json`;
         const deleteResponse = await fetch(deleteUrl, {
@@ -1006,7 +1044,7 @@ const FinancialSummaryPage = () => {
     } catch (error: any) {
       console.error("Error deleting expense:", error);
       const errorMessage = error?.message || error?.toString() || "Lỗi không xác định";
-      
+
       // Check for permission errors
       if (errorMessage.includes("permission") || errorMessage.includes("Permission") || errorMessage.includes("403")) {
         message.error("Không có quyền xóa chi phí. Vui lòng kiểm tra quyền truy cập Firebase.");
@@ -1027,7 +1065,7 @@ const FinancialSummaryPage = () => {
         description: expense.description,
         amount: expense.amount,
       });
-      
+
       // Load existing image if available
       if (expense.invoiceImage) {
         setFileList([
@@ -1173,18 +1211,18 @@ const FinancialSummaryPage = () => {
       render: (classes: Array<{ className: string; classId: string }>, record: any) => (
         <div>
           {classes.map((cls, index) => (
-            <Tag 
-              key={index} 
-              color="blue" 
-              style={{ 
-                marginBottom: "4px", 
+            <Tag
+              key={index}
+              color="blue"
+              style={{
+                marginBottom: "4px",
                 display: "inline-block",
                 cursor: "pointer"
               }}
               onClick={(e) => {
                 e.stopPropagation();
                 // Find sessions for this specific class
-                const classSessions = record.sessions.filter((session: any) => 
+                const classSessions = record.sessions.filter((session: any) =>
                   session["Class ID"] === cls.classId
                 );
                 setSelectedClassDetail({
@@ -1216,8 +1254,8 @@ const FinancialSummaryPage = () => {
       width: 150,
       align: "right" as const,
       render: (_: any, record: any) => {
-        const avgSalaryPerSession = record.totalSessions > 0 
-          ? record.totalSalary / record.totalSessions 
+        const avgSalaryPerSession = record.totalSessions > 0
+          ? record.totalSalary / record.totalSessions
           : 0;
         return (
           <Text style={{ color: "#1890ff" }}>
@@ -1247,7 +1285,7 @@ const FinancialSummaryPage = () => {
       const teacherId = classData?.["Teacher ID"];
       const teacher = teachers.find(t => t.id === teacherId);
       const teacherName = teacher?.["Họ và tên"] || teacher?.["Tên giáo viên"] || classData?.["Giáo viên chủ nhiệm"] || "-";
-      
+
       return {
         ...classRev,
         teacherId: teacherId || "",
@@ -1263,9 +1301,9 @@ const FinancialSummaryPage = () => {
       key: "className",
       width: 200,
       render: (text: string, record: any) => (
-        <Text 
-          style={{ 
-            color: "#1890ff", 
+        <Text
+          style={{
+            color: "#1890ff",
             cursor: "pointer",
             textDecoration: "underline"
           }}
@@ -1375,15 +1413,15 @@ const FinancialSummaryPage = () => {
         [],
         ["Giáo viên", "Lớp học", "Số buổi dạy", "Lương/buổi (VNĐ)", "Tổng lương (VNĐ)"],
         ...teacherSalaryDetails.map((item) => {
-          const avgSalaryPerSession = item.totalSessions > 0 
-            ? item.totalSalary / item.totalSessions 
+          const avgSalaryPerSession = item.totalSessions > 0
+            ? item.totalSalary / item.totalSessions
             : 0;
           return [
-          item.teacherName,
-          item.classes.map(c => c.className).join(", "),
-          item.totalSessions,
+            item.teacherName,
+            item.classes.map(c => c.className).join(", "),
+            item.totalSessions,
             avgSalaryPerSession,
-          item.totalSalary,
+            item.totalSalary,
           ];
         }),
         [],
@@ -1438,7 +1476,7 @@ const FinancialSummaryPage = () => {
     if (viewMode !== "year") return [];
 
     const monthlyData: Record<number, { revenue: number; expense: number }> = {};
-    
+
     // Initialize all months
     for (let i = 0; i < 12; i++) {
       monthlyData[i] = { revenue: 0, expense: 0 };
@@ -1447,7 +1485,7 @@ const FinancialSummaryPage = () => {
     // Calculate revenue by month
     Object.entries(studentInvoices).forEach(([, invoice]: [string, any]) => {
       if (!invoice || typeof invoice === "string") return;
-      
+
       if (invoice.status === "paid" && invoice.year === selectedYear && invoice.month !== undefined) {
         monthlyData[invoice.month].revenue += invoice.finalAmount || 0;
       }
@@ -1550,7 +1588,7 @@ const FinancialSummaryPage = () => {
           <Col xs={24} sm={12} md={6}>
             <Card>
               <Statistic
-                title="Tổng thu (Từ điểm danh)"
+                title="Doanh thu thực tế (Đã thu)"
                 value={totalRevenue}
                 precision={0}
                 valueStyle={{ color: "#3f8600" }}
@@ -1563,10 +1601,10 @@ const FinancialSummaryPage = () => {
           <Col xs={24} sm={12} md={6}>
             <Card>
               <Statistic
-                title="Tổng thu (Từ hóa đơn)"
+                title="Doanh thu dự kiến (Tổng)"
                 value={totalRevenueFromInvoices}
                 precision={0}
-                valueStyle={{ color: "#3f8600" }}
+                valueStyle={{ color: "#1890ff" }}
                 prefix={<RiseOutlined />}
                 suffix="đ"
                 formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
@@ -1919,7 +1957,7 @@ const FinancialSummaryPage = () => {
                 <Text><strong>Lớp:</strong> {selectedClassDetail.className}</Text>
                 <Text><strong>Số buổi:</strong> {selectedClassDetail.sessions.length} buổi</Text>
               </Space>
-              
+
               <Table
                 columns={[
                   {
@@ -1933,7 +1971,7 @@ const FinancialSummaryPage = () => {
                     title: "Giờ học",
                     key: "time",
                     width: 150,
-                    render: (_: any, session: any) => 
+                    render: (_: any, session: any) =>
                       `${session["Giờ bắt đầu"] || "-"} - ${session["Giờ kết thúc"] || "-"}`,
                   },
                   {
@@ -2187,8 +2225,8 @@ const FinancialSummaryPage = () => {
                   ? "Đi muộn"
                   : "Có mặt"
                 : record["Vắng có phép"] === true || record["Vắng có phép"] === "true"
-                ? "Vắng có phép"
-                : "Vắng";
+                  ? "Vắng có phép"
+                  : "Vắng";
 
               attendanceList.push({
                 key: `${session.id}_${record["Student ID"]}`,
@@ -2245,10 +2283,10 @@ const FinancialSummaryPage = () => {
               width: 120,
               align: "center" as const,
               render: (attendance: string) => {
-                const color = 
+                const color =
                   attendance === "Có mặt" ? "green" :
-                  attendance === "Đi muộn" ? "orange" :
-                  attendance === "Vắng có phép" ? "blue" : "red";
+                    attendance === "Đi muộn" ? "orange" :
+                      attendance === "Vắng có phép" ? "blue" : "red";
                 return <Tag color={color}>{attendance}</Tag>;
               },
             },

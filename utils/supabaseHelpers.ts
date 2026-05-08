@@ -34,9 +34,9 @@ const getClient = (useAdmin: boolean = false): SupabaseClient | null => {
  */
 export const convertFromSupabaseFormat = (data: any, tableName: string): any => {
   if (!data || typeof data !== "object") return data;
-  
+
   const converted = { ...data };
-  
+
   // For phieu_thu_hoc_phi table, convert field names from snake_case to camelCase
   if (tableName === "phieu_thu_hoc_phi" || tableName === "Phieu_thu_hoc_phi") {
     const fieldMapping: Record<string, string> = {
@@ -55,7 +55,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       invoice_image: "invoiceImage",
       firebase_id: "firebaseId",
     };
-    
+
     // Convert field names from snake_case to camelCase
     Object.entries(fieldMapping).forEach(([snakeCase, camelCase]) => {
       if (converted[snakeCase] !== undefined) {
@@ -81,7 +81,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       paid_at: "paidAt",
       invoice_image: "invoiceImage",
     };
-    
+
     // Convert field names from snake_case to camelCase
     Object.entries(fieldMapping).forEach(([snakeCase, camelCase]) => {
       if (converted[snakeCase] !== undefined) {
@@ -89,11 +89,11 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
         delete converted[snakeCase];
       }
     });
-    
+
     // Giữ nguyên month 1-12 như database (không convert sang 0-11)
     // Month từ database là 1-12, giữ nguyên
   }
-  
+
   // For Phieu_luong_giao_vien table
   if (tableName === "Phieu_luong_giao_vien") {
     const fieldMapping: Record<string, string> = {
@@ -110,7 +110,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       paid_at: "paidAt",
       invoice_image: "invoiceImage",
     };
-    
+
     Object.entries(fieldMapping).forEach(([snakeCase, camelCase]) => {
       if (converted[snakeCase] !== undefined) {
         converted[camelCase] = converted[snakeCase];
@@ -118,9 +118,9 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       }
     });
   }
-  
+
   // For lop_hoc table (Lớp học)
-  if (tableName === "lop_hoc" || tableName === "Lop_hoc") {
+  if (tableName === "lop_hoc" || tableName === "Lop_hoc" || tableName === "Lớp_học" || tableName === "datasheet/Lớp_học") {
     const fieldMapping: Record<string, string> = {
       ten_lop: "Tên lớp",
       ma_lop: "Mã lớp",
@@ -142,12 +142,35 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       ngay_bat_dau: "Ngày bắt đầu",
       ngay_ket_thuc: "Ngày kết thúc",
       tai_lieu: "Tài liệu",
-      dia_diem: "Địa điểm",
     };
-    
+
     Object.entries(fieldMapping).forEach(([snakeCase, camelCase]) => {
       if (converted[snakeCase] !== undefined) {
         converted[camelCase] = converted[snakeCase];
+        delete converted[snakeCase];
+      }
+    });
+  }
+
+  // For giao_vien table (Giáo viên)
+  if (tableName === "giao_vien" || tableName === "Giáo_viên") {
+    const fieldMapping: Record<string, string> = {
+      ten_giao_vien: "Họ và tên",
+      ma_giao_vien: "Mã giáo viên",
+      so_dien_thoai: "SĐT",
+      email: "Email",
+      password: "Password",
+      bien_che: "Biên chế",
+      vi_tri: "Vị trí",
+      ngan_hang: "Ngân hàng",
+      stk: "STK",
+      dia_chi: "Địa chỉ",
+      luong_theo_buoi: "Lương theo buổi",
+    };
+
+    Object.entries(fieldMapping).forEach(([snakeCase, firebaseField]) => {
+      if (converted[snakeCase] !== undefined) {
+        converted[firebaseField] = converted[snakeCase];
         delete converted[snakeCase];
       }
     });
@@ -162,14 +185,14 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       suc_chua: "Sức chứa",
       ghi_chu: "Ghi chú",
     };
-    
+
     Object.entries(fieldMapping).forEach(([snakeCase, firebaseField]) => {
       if (converted[snakeCase] !== undefined) {
         converted[firebaseField] = converted[snakeCase];
         delete converted[snakeCase];
       }
     });
-    
+
     // Merge metadata
     if (converted.metadata && typeof converted.metadata === "object") {
       Object.assign(converted, converted.metadata);
@@ -199,7 +222,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
   }
 
   // For hoc_sinh table (Học sinh)
-  if (tableName === "hoc_sinh" || tableName === "Học_sinh") {
+  if (tableName === "hoc_sinh" || tableName === "Học_sinh" || tableName === "datasheet/Học_sinh") {
     const fieldMapping: Record<string, string> = {
       ho_va_ten: "Họ và tên",
       ma_hoc_sinh: "Mã học sinh",
@@ -213,7 +236,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       khoi: "Khối",
       email: "Email",
       username: "Username",
-      password: "Password",
+      password: "Mật khẩu",
       diem_so: "Điểm số",
       trang_thai: "Trạng thái",
       so_gio_da_gia_han: "Số giờ đã gia hạn",
@@ -364,68 +387,84 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       converted["Class ID"] = converted.class_id;
     }
   }
-  
+
   return converted;
 };
+
+// Cache for fetching status to prevent redundant calls
+const fetchLocks = new Map<string, Promise<any>>();
 
 /**
  * Get all records from a table (replaces Firebase ref + get)
  */
-export const supabaseGetAll = async <T = any>(tablePath: string): Promise<Record<string, T> | null> => {
-  const client = getClient(false);
-  const tableName = getTableName(tablePath);
-
-  if (missingTables.has(tableName)) {
-    return null;
+export const supabaseGetAll = async <T = any>(tablePath: string, force: boolean = false): Promise<Record<string, T> | null> => {
+  // Use lock to prevent simultaneous redundant fetches, unless forced
+  if (!force && fetchLocks.has(tablePath)) {
+    return fetchLocks.get(tablePath);
   }
 
-  const { data, error } = await client.from(tableName).select("*");
+  const fetchPromise = (async () => {
+    const tableName = getTableName(tablePath);
+    // Use admin for all tables to bypass RLS issues globally during migration
+    const useAdmin = true;
+    const client = getClient(useAdmin);
 
-  if (error) {
-    // If table doesn't exist, return null instead of logging error (table might not be created yet)
-    // PGRST205 = table not found, 404 = not found (HTTP status)
-    if (error.code === "PGRST205" || error.message?.includes("404") || error.message?.includes("not found")) {
-      missingTables.add(tableName);
-      // Silently skip optional tables (like thoi_khoa_bieu, khoa_hoc) that may not exist yet
-      // Only log for development mode if needed
-      const optionalTables = ["thoi_khoa_bieu", "khoa_hoc"];
-      if (process.env.NODE_ENV === "development" && !optionalTables.some(t => tableName.includes(t))) {
-        console.warn(`⚠️ Table ${tableName} does not exist yet. Skipping...`);
-      }
+    if (missingTables.has(tableName)) {
       return null;
     }
-    console.error(`Error fetching from ${tableName}:`, error);
-    return null;
-  }
 
-  // Convert array to object with id as key, and convert field names
-  if (data && Array.isArray(data)) {
-    const result: Record<string, T> = {};
-    data.forEach((item: any) => {
-      if (item.id) {
-        // Convert from Supabase format (snake_case) to camelCase
-        const convertedItem = convertFromSupabaseFormat(item, tableName);
-        result[item.id] = convertedItem as T;
+    try {
+      const { data, error } = await client.from(tableName).select("*");
+
+      if (error) {
+        // If table doesn't exist, return null instead of logging error (table might not be created yet)
+        // PGRST205 = table not found, 404 = not found (HTTP status)
+        if (error.code === "PGRST205" || error.message?.includes("404") || error.message?.includes("not found")) {
+          missingTables.add(tableName);
+          return null;
+        }
+        console.error(`Error fetching from ${tableName}:`, error);
+        return null;
       }
-    });
-    return result;
-  }
 
-  return null;
+      // Convert array to object with id as key, and convert field names
+      if (data && Array.isArray(data)) {
+        const result: Record<string, T> = {};
+        data.forEach((item: any) => {
+          if (item.id) {
+            // Convert from Supabase format (snake_case) to camelCase
+            const convertedItem = convertFromSupabaseFormat(item, tableName);
+            result[item.id] = convertedItem as T;
+          }
+        });
+        return result;
+      }
+      return null;
+    } catch (err) {
+      console.error(`❌ Error in supabaseGetAll for ${tablePath}:`, err);
+      return null;
+    }
+  })();
+
+  fetchLocks.set(tablePath, fetchPromise);
+  // Clear lock after a short delay to allow fresh fetches later
+  fetchPromise.finally(() => setTimeout(() => fetchLocks.delete(tablePath), 1000));
+
+  return fetchPromise;
 };
 
 /**
  * Get a single record by ID
  */
-export const supabaseGetById = async <T = any>(tablePath: string, id: string): Promise<T | null> => {
-  const client = getClient(false);
+export const supabaseGetById = async <T = any>(tablePath: string, id: string, useAdmin: boolean = false): Promise<T | null> => {
+  const client = getClient(useAdmin);
   const tableName = getTableName(tablePath);
 
   const { data, error } = await client
     .from(tableName)
     .select("*")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error(`Error fetching ${id} from ${tableName}:`, error);
@@ -541,15 +580,35 @@ export const supabaseSet = async (
     console.error("❌ Cannot get Supabase client. Check initialization.");
     return false;
   }
-  
+
+  // Extract ID from path if not in data
+  const parts = tablePath.split("/");
+  // If path is like "datasheet/TableName/ID", the last part is the ID
+  // parts[0] = "datasheet", parts[1] = "TableName", parts[2] = "ID"
+  if (parts.length >= 3) {
+    const pathId = parts[parts.length - 1];
+    if (pathId && !data.id) {
+      data.id = pathId;
+      console.log(`🆔 Extracted ID from path: ${pathId}`);
+    }
+  }
+
   const tableName = getTableName(tablePath);
-  console.log(`📤 Saving to Supabase table: ${tableName}`, { id: data.id, dataKeys: Object.keys(data) });
   
+  // Clear fetch lock for this table path after write operation to ensure next fetch gets fresh data
+  fetchLocks.delete(tablePath);
+  // Also clear the table name without parts if it's different
+  if (tablePath.includes("/")) {
+    fetchLocks.delete(tableName);
+  }
+
+  console.log(`📤 Saving to Supabase table: ${tableName}`, { id: data.id, dataKeys: Object.keys(data) });
+
   // Convert camelCase to snake_case for database fields
   const convertedData = convertToSupabaseFormat(data, tableName);
   console.log(`📤 Converted data keys:`, Object.keys(convertedData));
-  console.log(`📤 Converted data (full):`, JSON.stringify(convertedData, null, 2));
-  
+  // console.log(`📤 Converted data (full):`, JSON.stringify(convertedData, null, 2));
+
   // Remove null/undefined values that might cause issues (except for required fields)
   const cleanedData: any = { ...convertedData };
   Object.keys(cleanedData).forEach(key => {
@@ -557,7 +616,12 @@ export const supabaseSet = async (
       delete cleanedData[key];
     }
   });
-  
+
+  // Ensure ID is present if we're doing an upsert on ID
+  if (data.id && !cleanedData.id) {
+    cleanedData.id = data.id;
+  }
+
   // QUAN TRỌNG: Bảng phieu_thu_hoc_phi KHÔNG có các cột: subjects, class_id, class_name, class_code, classCode, subject, price_per_session, session_prices, sessions, total_sessions
   // Xóa các field này nếu có (danh sách môn học chi tiết đã được lưu trong phieu_thu_hoc_phi_chi_tiet)
   if (tableName === "phieu_thu_hoc_phi" || tableName === "Phieu_thu_hoc_phi") {
@@ -569,10 +633,10 @@ export const supabaseSet = async (
       }
     });
   }
-  
+
   // If data has id, use upsert; otherwise insert
   const isUpsert = options?.upsert || (data.id !== undefined);
-  
+
   // Xác định onConflict dựa trên table name
   let onConflict = options?.onConflict || "id";
   if (tableName === "phieu_thu_hoc_phi_chi_tiet") {
@@ -598,11 +662,22 @@ export const supabaseSet = async (
       // Nếu không có id, vẫn dùng id (sẽ tạo mới với ID tự động)
       onConflict = "id";
     }
+  } else if (tableName === "phieu_luong_giao_vien") {
+    // Bảng phieu_luong_giao_vien có constraint unique trên (teacher_id, month, year)
+    // BẮT BUỘC dùng business key cho onConflict để tránh lỗi 23505 (Duplicate key)
+    if (cleanedData.teacher_id && cleanedData.month !== undefined && cleanedData.year !== undefined) {
+      onConflict = "teacher_id,month,year";
+    } else if (cleanedData.id) {
+      onConflict = "id";
+    } else {
+      onConflict = "id";
+    }
   }
-  
+
   if (isUpsert) {
-    console.log(`📤 Attempting to upsert to ${tableName} with onConflict: ${onConflict}...`);
-    const { data, error } = await client
+    console.log(`📤 Attempting to upsert to ${tableName} (Path: ${tablePath}) with onConflict: ${onConflict}...`);
+    console.log(`📤 Final cleanedData to Supabase:`, JSON.stringify(cleanedData, null, 2));
+    const { data: upsertData, error } = await client
       .from(tableName)
       .upsert(cleanedData, {
         onConflict: onConflict,
@@ -619,7 +694,7 @@ export const supabaseSet = async (
         code: error.code,
       });
       console.error("📋 Data that failed:", JSON.stringify(cleanedData, null, 2));
-      
+
       // Show detailed error message
       let errorMessage = `Lỗi khi lưu vào ${tableName}: ${error.message || "Unknown error"}`;
       if (error.code) {
@@ -629,7 +704,7 @@ export const supabaseSet = async (
         errorMessage += `\n💡 Gợi ý: ${error.hint}`;
       }
       console.error("🚨 ERROR MESSAGE:", errorMessage);
-      
+
       // Check for common issues
       if (error.code === "42501") {
         console.error("💡 Có thể là lỗi RLS (Row Level Security). Hãy tắt RLS hoặc thêm policy trong Supabase.");
@@ -649,13 +724,13 @@ export const supabaseSet = async (
               onConflict: "id",
             })
             .select();
-          
+
           if (retryError) {
             console.error(`❌ Error upserting to ${tableName} (retry with id):`, retryError);
             console.error("📋 Data that failed:", JSON.stringify(cleanedData, null, 2));
             return false;
           }
-          
+
           console.log(`✅ Successfully upserted to ${tableName} (using id as fallback):`, retryData);
           console.warn(`💡 Để sử dụng onConflict="${onConflict}", hãy chạy script: scripts/add_unique_constraint_to_phieu_thu_hoc_phi.sql`);
           return true;
@@ -669,7 +744,7 @@ export const supabaseSet = async (
       } else if (error.code === "23514") {
         console.error("💡 Vi phạm constraint (CHECK constraint).");
       }
-      
+
       // Nếu không phải lỗi 42P10 (đã được xử lý ở trên), return false
       if (error.code !== "42P10") {
         return false;
@@ -690,7 +765,7 @@ export const supabaseSet = async (
         code: error.code,
       });
       console.error("📋 Data that failed:", JSON.stringify(cleanedData, null, 2));
-      
+
       // Check for common issues
       if (error.code === "42501") {
         console.error("💡 Có thể là lỗi RLS (Row Level Security). Hãy tắt RLS hoặc thêm policy trong Supabase.");
@@ -701,7 +776,7 @@ export const supabaseSet = async (
       } else if (error.code === "23514") {
         console.error("💡 Vi phạm constraint (CHECK constraint). Kiểm tra month (0-11), year (>2000), status (paid/unpaid).");
       }
-      
+
       return false;
     }
     console.log(`✅ Successfully inserted to ${tableName}:`, data);
@@ -723,15 +798,21 @@ export const supabaseUpdate = async (
     console.error("❌ Cannot get Supabase client. Check initialization.");
     return false;
   }
-  
+
   const tableName = getTableName(tablePath);
-  
+
+  // Clear fetch lock
+  fetchLocks.delete(tablePath);
+  if (tablePath.includes("/")) {
+    fetchLocks.delete(tableName);
+  }
+
   // Convert updates format for Supabase (skip defaults for update operations)
   let convertedUpdates = convertToSupabaseFormat(updates, tableName, true);
 
   console.log(`🔄 Updating in Supabase table: ${tableName}`, { id, updatesKeys: Object.keys(convertedUpdates) });
   console.log(`🔄 Full converted updates:`, JSON.stringify(convertedUpdates, null, 2));
-  
+
   // First, check if the record exists
   const { data: existingData, error: checkError } = await client
     .from(tableName)
@@ -753,7 +834,7 @@ export const supabaseUpdate = async (
     console.warn(`⚠️ For update operations, the record must already exist in the database.`);
     return false;
   }
-  
+
   // Record exists, proceed with update
   const { data, error } = await client
     .from(tableName)
@@ -783,12 +864,63 @@ export const supabaseUpdate = async (
 };
 
 /**
+ * Update multiple records by filter (e.g. student_id, month, year)
+ */
+export const supabaseUpdateMany = async (
+  tablePath: string,
+  filters: Record<string, any>,
+  updates: any
+): Promise<boolean> => {
+  const client = getClient(true);
+  if (!client) {
+    console.error("❌ Cannot get Supabase client. Check initialization.");
+    return false;
+  }
+
+  const tableName = getTableName(tablePath);
+
+  // Clear fetch lock
+  fetchLocks.delete(tablePath);
+  if (tablePath.includes("/")) {
+    fetchLocks.delete(tableName);
+  }
+  
+  // Convert updates to snake_case
+  const convertedUpdates = convertToSupabaseFormat(updates, tableName, true);
+
+  console.log(`📤 Updating many in ${tableName} with filters:`, filters);
+  
+  let query = client.from(tableName).update(convertedUpdates);
+
+  // Apply filters
+  Object.entries(filters).forEach(([key, value]) => {
+    query = query.eq(key, value);
+  });
+
+  const { error, data } = await query.select();
+
+  if (error) {
+    console.error(`❌ Error updating many in ${tableName}:`, error);
+    return false;
+  }
+
+  console.log(`✅ Successfully updated ${data?.length || 0} row(s) in ${tableName} by filters`);
+  return true;
+};
+
+/**
  * Delete a record (replaces Firebase ref + remove)
  */
 export const supabaseRemove = async (tablePath: string, id: string): Promise<boolean> => {
   const client = getClient(true); // Use admin for write operations
   const tableName = getTableName(tablePath);
-  
+
+  // Clear fetch lock
+  fetchLocks.delete(tablePath);
+  if (tablePath.includes("/")) {
+    fetchLocks.delete(tableName);
+  }
+
   const { error } = await client
     .from(tableName)
     .delete()
@@ -811,73 +943,108 @@ export const supabaseOnValue = (
   tablePath: string,
   callback: (data: any) => void
 ): (() => void) => {
-  const client = getClient(false);
   const tableName = getTableName(tablePath);
+  // Use admin for all tables to bypass RLS issues globally during migration
+  const useAdmin = true;
+  const client = getClient(useAdmin);
+
+  // Keep track of the last data sent to the callback to prevent redundant updates
+  let lastDataJson = "";
+
+  // Helper to safely call callback with change detection
+  const safeCallback = (data: any) => {
+    const currentDataJson = JSON.stringify(data);
+    if (currentDataJson !== lastDataJson) {
+      lastDataJson = currentDataJson;
+      callback(data);
+    }
+  };
 
   if (missingTables.has(tableName)) {
-    callback({});
-    return () => {};
+    safeCallback({});
+    return () => { };
   }
 
   // Initial fetch - giống Firebase onValue, gọi callback ngay với data hiện tại
   supabaseGetAll(tablePath).then((data) => {
     if (data && typeof data === 'object' && Object.keys(data).length > 0) {
       console.log(`📡 Initial load from ${tableName}: ${Object.keys(data).length} records`);
-      callback(data);
+      safeCallback(data);
     } else {
       console.log(`📡 Initial load from ${tableName}: no data`);
-      callback({});
+      safeCallback({});
       if (missingTables.has(tableName)) {
         return;
       }
     }
   }).catch((error) => {
     console.error(`📡 Error initial loading from ${tableName}:`, error);
-    callback({});
+    safeCallback({});
   });
 
   if (missingTables.has(tableName)) {
-    return () => {};
+    return () => { };
   }
 
   // Then subscribe to real-time changes
-  const channel = client
-    .channel(`${tableName}_changes`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: tableName,
-      },
-      (payload) => {
-        console.log(`📡 Real-time update from ${tableName}:`, payload.eventType);
-        // Fetch all data when change occurs
-        supabaseGetAll(tablePath).then((data) => {
-          if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-            console.log(`📡 Fetched ${Object.keys(data).length} records after real-time update`);
-            callback(data);
-          } else {
-            callback({});
-          }
-        }).catch((error) => {
-          console.error(`📡 Error fetching data after real-time update:`, error);
-          callback({});
-        });
-      }
-    )
-    .subscribe();
+  let channel: any = null;
+  try {
+    const realtimeClient = client;
+
+    // Generate a unique channel ID to avoid conflicts when multiple components subscribe to the same table
+    const channelId = Math.random().toString(36).substring(2, 10);
+    const channelName = `${tableName}_changes_${channelId}`;
+
+    channel = realtimeClient
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: tableName,
+        },
+        (payload) => {
+          console.log(`📡 [${channelName}] Real-time update:`, payload.eventType);
+          // Fetch all data when change occurs - FORCE fresh fetch bypassing cache/locks
+          supabaseGetAll(tablePath, true).then((data) => {
+            if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+              console.log(`📡 [${channelName}] Fetched ${Object.keys(data).length} records`);
+              safeCallback(data);
+            } else {
+              safeCallback({});
+            }
+          }).catch((error) => {
+            console.error(`📡 [${channelName}] Error fetching data:`, error);
+            safeCallback({});
+          });
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log(`✅ Realtime subscribed to ${tableName} (Channel: ${channelName})`);
+        } else if (status === 'CLOSED') {
+          console.warn(`⚠️ Realtime subscription closed for ${tableName} (Channel: ${channelName})`);
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error(`❌ Realtime channel error for ${tableName} (Channel: ${channelName})`);
+        }
+      });
+  } catch (error) {
+    console.warn(`⚠️ Realtime subscription failed for ${tableName}:`, error);
+  }
 
   // Return unsubscribe function
   return () => {
-    client.removeChannel(channel);
+    if (channel) {
+      client.removeChannel(channel);
+    }
   };
 };
 
 // Helper to convert Firebase data format to Supabase format
 export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaults: boolean = false): any => {
   const converted = { ...data };
-  
+
   // For phieu_thu_hoc_phi table, convert field names from camelCase to snake_case
   if (tableName === "phieu_thu_hoc_phi" || tableName === "Phieu_thu_hoc_phi") {
     const fieldMapping: Record<string, string> = {
@@ -896,7 +1063,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       invoiceImage: "invoice_image",
       firebaseId: "firebase_id",
     };
-    
+
     // Convert field names
     Object.entries(fieldMapping).forEach(([camelCase, snakeCase]) => {
       if (converted[camelCase] !== undefined) {
@@ -904,11 +1071,11 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         delete converted[camelCase];
       }
     });
-    
+
     // Xóa classCode và class_code khỏi data trước khi lưu (không điền vào database nữa)
     if (converted.class_code !== undefined) delete converted.class_code;
     if (converted.classCode !== undefined) delete converted.classCode;
-    
+
     // Only add default values if skipDefaults is false (for insert/upsert operations)
     // For update operations, skipDefaults should be true to avoid setting fields to null
     // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có các cột: class_id, class_name, class_code, price_per_session, subject
@@ -917,7 +1084,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       // Ensure required fields have default values if missing (chỉ các cột có trong bảng)
       if (converted.debt === undefined) converted.debt = 0;
     }
-    
+
     // Ensure numeric fields are numbers, not strings (chỉ các cột có trong bảng)
     // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có cột total_sessions
     if (typeof converted.total_amount === "string") converted.total_amount = parseFloat(converted.total_amount) || 0;
@@ -939,12 +1106,12 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         // Ví dụ: month = 2 (từ filter) → giữ nguyên 2, KHÔNG cộng thành 3
       }
     }
-    
+
     if (typeof converted.year === "string") converted.year = parseInt(converted.year) || 0;
-    
+
     // LƯU Ý: Bảng phieu_thu_hoc_phi KHÔNG có cột sessions và session_prices
     // Không xử lý các cột này
-    
+
     // Đảm bảo field "status" được giữ nguyên (không bị xóa)
     // Status không cần convert vì tên field giống nhau trong cả camelCase và snake_case
     if (converted.status === undefined && data.status !== undefined) {
@@ -968,7 +1135,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       paidAt: "paid_at",
       invoiceImage: "invoice_image",
     };
-    
+
     // Convert field names from camelCase to snake_case
     Object.entries(fieldMapping).forEach(([camelCase, snakeCase]) => {
       if (converted[camelCase] !== undefined) {
@@ -976,11 +1143,11 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         delete converted[camelCase];
       }
     });
-    
+
     // Xóa class_code và classCode khỏi data trước khi lưu (không điền vào database nữa)
     if (converted.class_code !== undefined) delete converted.class_code;
     if (converted.classCode !== undefined) delete converted.classCode;
-    
+
     // Only add default values if skipDefaults is false
     if (!skipDefaults) {
       if (converted.class_id === undefined) converted.class_id = null;
@@ -991,7 +1158,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       if (converted.debt === undefined) converted.debt = 0;
       if (converted.notes === undefined) converted.notes = null;
     }
-    
+
     // Ensure numeric fields are numbers, not strings
     if (typeof converted.total_sessions === "string") converted.total_sessions = parseInt(converted.total_sessions) || 0;
     if (typeof converted.total_amount === "string") converted.total_amount = parseFloat(converted.total_amount) || 0;
@@ -999,11 +1166,11 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     if (typeof converted.discount === "string") converted.discount = parseFloat(converted.discount) || 0;
     if (typeof converted.debt === "string") converted.debt = parseFloat(converted.debt) || 0;
     if (typeof converted.price_per_session === "string") converted.price_per_session = parseFloat(converted.price_per_session) || 0;
-    
+
     // Xóa final_amount vì không tồn tại trong phieu_thu_hoc_phi_chi_tiet
     if (converted.final_amount !== undefined) delete converted.final_amount;
     if (converted.finalAmount !== undefined) delete converted.finalAmount;
-    
+
     // QUAN TRỌNG: Month đã là 1-12 từ filter UI, KHÔNG cộng thêm 1
     // Không convert từ 0-11 → 1-12 vì month đã là 1-12 từ filter
     if (converted.month !== undefined && converted.month !== null) {
@@ -1019,9 +1186,9 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         // Ví dụ: month = 2 (từ filter) → giữ nguyên 2, KHÔNG cộng thành 3
       }
     }
-    
+
     if (typeof converted.year === "string") converted.year = parseInt(converted.year) || 0;
-    
+
     // Ensure sessions is properly formatted as JSONB
     if (!skipDefaults) {
       if (converted.sessions && Array.isArray(converted.sessions)) {
@@ -1029,7 +1196,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       } else if (!converted.sessions) {
         converted.sessions = [];
       }
-      
+
       // Ensure metadata is properly formatted
       if (converted.metadata && typeof converted.metadata === "object") {
         converted.metadata = converted.metadata;
@@ -1038,9 +1205,9 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       }
     }
   }
-  
-  // For Phieu_luong_giao_vien table
-  if (tableName === "Phieu_luong_giao_vien") {
+
+  // For phieu_luong_giao_vien table
+  if (tableName === "phieu_luong_giao_vien" || tableName === "Phieu_luong_giao_vien") {
     const fieldMapping: Record<string, string> = {
       teacherId: "teacher_id",
       teacherName: "teacher_name",
@@ -1055,15 +1222,36 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       paidAt: "paid_at",
       invoiceImage: "invoice_image",
     };
-    
+
     Object.entries(fieldMapping).forEach(([camelCase, snakeCase]) => {
       if (converted[camelCase] !== undefined) {
         converted[snakeCase] = converted[camelCase];
         delete converted[camelCase];
       }
     });
+
+    // Ensure numeric fields are numbers
+    if (typeof converted.total_sessions === "string") converted.total_sessions = parseInt(converted.total_sessions) || 0;
+    if (typeof converted.total_salary === "string") converted.total_salary = parseFloat(converted.total_salary) || 0;
+    if (typeof converted.total_allowance === "string") converted.total_allowance = parseFloat(converted.total_allowance) || 0;
+    if (typeof converted.salary_per_session === "string") converted.salary_per_session = parseFloat(converted.salary_per_session) || 0;
+    if (typeof converted.total_hours === "string") converted.total_hours = parseFloat(converted.total_hours) || 0;
+    if (typeof converted.total_minutes === "string") converted.total_minutes = parseFloat(converted.total_minutes) || 0;
+
+    // Handle month and year (Ensure month is 1-12)
+    if (converted.month !== undefined && converted.month !== null) {
+      const m = parseInt(String(converted.month));
+      // If month is 0-11 (from JS Date), convert to 1-12
+      // Note: We check if it's less than 12 to be safe, but usually it's 0-11
+      if (m >= 0 && m < 12) {
+        converted.month = m + 1;
+      } else {
+        converted.month = m;
+      }
+    }
+    if (typeof converted.year === "string") converted.year = parseInt(converted.year) || 0;
   }
-  
+
   // For lop_hoc_hoc_sinh table (Chi tiết học sinh trong lớp)
   if (tableName === "lop_hoc_hoc_sinh" || tableName === "Lop_hoc_hoc_sinh") {
     const fieldMapping: Record<string, string> = {
@@ -1076,7 +1264,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       createdAt: "created_at",
       updatedAt: "updated_at",
     };
-    
+
     // Convert field names from camelCase to snake_case
     Object.entries(fieldMapping).forEach(([camelCase, snakeCase]) => {
       if (converted[camelCase] !== undefined) {
@@ -1084,12 +1272,12 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         delete converted[camelCase];
       }
     });
-    
+
     // Ensure numeric fields are numbers
     if (typeof converted.hoc_phi_rieng === "string") {
       converted.hoc_phi_rieng = parseFloat(converted.hoc_phi_rieng) || null;
     }
-    
+
     // Ensure status has default value if not provided
     if (!converted.status) {
       converted.status = "active";
@@ -1112,7 +1300,7 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       "Khối": "khoi",
       "Email": "email",
       "Username": "username",
-      "Password": "password",
+      "Mật khẩu": "password",
       "Điểm số": "diem_so",
       "Trạng thái": "trang_thai",
       "Số giờ đã gia hạn": "so_gio_da_gia_han",
@@ -1126,22 +1314,22 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
       if (converted[firebaseField] !== undefined && converted[firebaseField] !== null) {
         let value = converted[firebaseField];
-        
+
         // Convert empty strings to null for TEXT fields (except ho_va_ten which is NOT NULL)
         if (typeof value === "string" && value === "" && supabaseField !== "ho_va_ten") {
           value = null;
         }
-        
+
         // Convert numeric fields
         if (["so_gio_da_gia_han", "so_gio_con_lai", "so_gio_da_hoc", "diem_so"].includes(supabaseField)) {
           value = typeof value === "string" ? parseFloat(value) || 0 : (value || 0);
         }
-        
+
         // Set default for trang_thai
         if (supabaseField === "trang_thai") {
           value = value || "active";
         }
-        
+
         // Only set if value is not null (or if it's ho_va_ten which is required)
         if (value !== null || supabaseField === "ho_va_ten") {
           converted[supabaseField] = value;
@@ -1149,15 +1337,17 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
         delete converted[firebaseField];
       }
     });
-    
+
     // Ensure ho_va_ten is not empty (required field)
     if (!converted.ho_va_ten || converted.ho_va_ten === "") {
       converted.ho_va_ten = "Chưa có tên"; // Default value if empty
     }
 
     // Store unknown fields in metadata
+    // Important: we must NOT move the already converted snake_case fields to metadata
+    const supabaseFields = Object.values(fieldMapping);
     Object.keys(converted).forEach((key) => {
-      if (!fieldMapping[key] && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
+      if (!fieldMapping[key] && !supabaseFields.includes(key) && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
         metadata[key] = converted[key];
         delete converted[key];
       }
@@ -1189,24 +1379,24 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
       if (converted[firebaseField] !== undefined && converted[firebaseField] !== null) {
         let value = converted[firebaseField];
-        
+
         // Convert numeric fields
         if (["gio_nhap_them", "old_total", "new_total"].includes(supabaseField)) {
           value = typeof value === "string" ? parseFloat(value) || 0 : (value || 0);
         }
-        
+
         // Convert date fields
         if (supabaseField === "ngay_nhap" && typeof value === "string") {
           // Keep as date string (YYYY-MM-DD)
           value = value;
         }
-        
+
         // Convert time fields
         if (supabaseField === "gio_nhap" && typeof value === "string") {
           // Keep as time string (HH:MM:SS)
           value = value;
         }
-        
+
         converted[supabaseField] = value;
         delete converted[firebaseField];
       }
@@ -1244,22 +1434,22 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
       if (converted[firebaseField] !== undefined && converted[firebaseField] !== null) {
         let value = converted[firebaseField];
-        
+
         // Convert numeric fields
         if (["thay_doi", "so_sao_truoc", "so_sao_sau"].includes(supabaseField)) {
           value = typeof value === "string" ? parseFloat(value) || 0 : (value || 0);
         }
-        
+
         // Convert date fields
         if (supabaseField === "ngay_chinh_sua" && typeof value === "string") {
           value = value;
         }
-        
+
         // Convert time fields
         if (supabaseField === "gio_chinh_sua" && typeof value === "string") {
           value = value;
         }
-        
+
         converted[supabaseField] = value;
         delete converted[firebaseField];
       }
@@ -1277,9 +1467,32 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       converted.metadata = metadata;
     }
   }
-  
+
+  // For giao_vien table (Teachers) - convert FROM Supabase
+  if (tableName === "giao_vien" || tableName === "Giáo_viên") {
+    const fieldMapping: Record<string, string> = {
+      ten_giao_vien: "Họ và tên",
+      ma_giao_vien: "Mã giáo viên",
+      so_dien_thoai: "SĐT",
+      email: "Email",
+      password: "Password",
+      bien_che: "Biên chế",
+      vi_tri: "Vị trí",
+      ngan_hang: "Ngân hàng",
+      stk: "STK",
+      dia_chi: "Địa chỉ",
+      luong_theo_buoi: "Lương theo buổi",
+    };
+
+    Object.entries(fieldMapping).forEach(([supabaseField, firebaseField]) => {
+      if (converted[supabaseField] !== undefined) {
+        converted[firebaseField] = converted[supabaseField];
+      }
+    });
+  }
+
   // For lop_hoc table (Lớp học)
-  if (tableName === "lop_hoc" || tableName === "Lop_hoc") {
+  if (tableName === "lop_hoc" || tableName === "Lop_hoc" || tableName === "Lớp_học" || tableName === "datasheet/Lớp_học") {
     const fieldMapping: Record<string, string> = {
       "Tên lớp": "ten_lop",
       "Mã lớp": "ma_lop",
@@ -1301,16 +1514,15 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       "Ngày bắt đầu": "ngay_bat_dau",
       "Ngày kết thúc": "ngay_ket_thuc",
       "Tài liệu": "tai_lieu",
-      "Địa điểm": "dia_diem",
     };
-    
+
     Object.entries(fieldMapping).forEach(([camelCase, snakeCase]) => {
       if (converted[camelCase] !== undefined) {
         converted[snakeCase] = converted[camelCase];
         delete converted[camelCase];
       }
     });
-    
+
     // Ensure numeric fields are numbers
     if (typeof converted.hoc_phi_moi_buoi === "string") converted.hoc_phi_moi_buoi = parseFloat(converted.hoc_phi_moi_buoi) || 0;
     if (typeof converted.luong_gv === "string") converted.luong_gv = parseFloat(converted.luong_gv) || 0;
@@ -1330,20 +1542,21 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
       if (converted[firebaseField] !== undefined && converted[firebaseField] !== null) {
         let value = converted[firebaseField];
-        
+
         // Convert numeric fields
         if (supabaseField === "suc_chua") {
           value = typeof value === "string" ? parseFloat(value) || null : (value || null);
         }
-        
+
         converted[supabaseField] = value;
         delete converted[firebaseField];
       }
     });
 
     // Store unknown fields in metadata
+    const supabaseFields = Object.values(fieldMapping);
     Object.keys(converted).forEach((key) => {
-      if (!fieldMapping[key] && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
+      if (!fieldMapping[key] && !supabaseFields.includes(key) && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
         metadata[key] = converted[key];
         delete converted[key];
       }
@@ -1453,6 +1666,34 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     }
     // Keep columns and scores as JSONB (already in correct format)
   }
-  
+
+  // For giao_vien table (Teachers) - convert TO Supabase
+  if (tableName === "giao_vien" || tableName === "Giáo_viên") {
+    const fieldMapping: Record<string, string> = {
+      "Họ và tên": "ten_giao_vien",
+      "Mã giáo viên": "ma_giao_vien",
+      "SĐT": "so_dien_thoai",
+      "Email": "email",
+      "Password": "password",
+      "Biên chế": "bien_che",
+      "Vị trí": "vi_tri",
+      "Ngân hàng": "ngan_hang",
+      "STK": "stk",
+      "Địa chỉ": "dia_chi",
+      "Lương theo buổi": "luong_theo_buoi",
+    };
+
+    Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
+      if (converted[firebaseField] !== undefined) {
+        converted[supabaseField] = converted[firebaseField];
+        delete converted[firebaseField];
+      }
+    });
+
+    if (typeof converted.luong_theo_buoi === "string") {
+      converted.luong_theo_buoi = parseFloat(converted.luong_theo_buoi) || 0;
+    }
+  }
+
   return converted;
 };

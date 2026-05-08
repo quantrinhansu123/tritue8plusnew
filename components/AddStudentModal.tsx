@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Select, Table, Button, Space, Popconfirm, DatePicker, Typography, Divider } from 'antd';
 import { DeleteOutlined, CalendarOutlined } from '@ant-design/icons';
-import { ref, onValue } from 'firebase/database';
-import { database } from '../firebase';
+import { supabaseOnValue, convertFromSupabaseFormat } from '../utils/supabaseHelpers';
 import { useClasses } from '../hooks/useClasses';
 import { Class } from '../types';
 import dayjs from 'dayjs';
@@ -31,27 +30,29 @@ const AddStudentModal = ({ open, onClose, classData }: AddStudentModalProps) => 
 
     useEffect(() => {
         setLoadingStudents(true);
-        const studentsRef = ref(database, 'datasheet/Danh_sách_học_sinh');
-        const unsubscribe = onValue(studentsRef, (snapshot) => {
-            const data = snapshot.val();
-            console.log('AddStudentModal - Raw student data:', data);
-            if (data) {
-                const studentList = Object.entries(data).map(([id, value]) => ({
-                    id,
-                    ...(value as Omit<Student, 'id'>)
-                }));
+        // Use Supabase instead of Firebase
+        const unsubscribe = supabaseOnValue('datasheet/Danh_sách_học_sinh', (data) => {
+            console.log('AddStudentModal - Raw student data from Supabase:', data);
+            if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                const studentList = Object.entries(data).map(([id, value]: [string, any]) => {
+                    const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+                    return {
+                        id,
+                        ...converted
+                    };
+                });
                 console.log('AddStudentModal - Processed student list:', studentList);
-                setStudents(studentList);
+                setStudents(studentList as Student[]);
             } else {
-                console.warn('AddStudentModal - No student data found');
+                console.warn('AddStudentModal - No student data found in Supabase');
                 setStudents([]);
             }
             setLoadingStudents(false);
-        }, (error) => {
-            console.error('AddStudentModal - Error loading students:', error);
-            setLoadingStudents(false);
         });
-        return () => unsubscribe();
+
+        return () => {
+            if (unsubscribe) unsubscribe();
+        };
     }, []);
 
     const handleAddStudents = async () => {

@@ -10,15 +10,18 @@ export default function AdminLayout() {
   const { currentUser, userProfile, loading } = useAuth();
   const location = useLocation();
 
-  // DISABLED: Authentication check - allow access without login
-  // Tắt authentication để cho phép truy cập không cần đăng nhập
-  // Bỏ qua tất cả các check authentication
-  
-  // Bỏ qua tất cả các check và hiển thị nội dung trực tiếp
+  // Authentication check
+  if (loading) return <Loader />;
+
+  if (!currentUser) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
 
   // Authorization: require admin or teacher
   // Parents are not allowed in workspace
-  console.log(userProfile,'sdfsdfsdfsdfs')
+  if (userProfile?.role === "parent") {
+    return <Navigate to="/parent-portal" replace />;
+  }
   
   return (
     <SidebarProvider

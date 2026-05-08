@@ -5,7 +5,7 @@ import { Form, Input, Button, Alert, Tabs } from "antd";
 import { UserOutlined, LockOutlined, IdcardOutlined } from "@ant-design/icons";
 
 const Login: React.FC = () => {
-  const { signInWithEmail, signInWithParentCredentials } = useAuth();
+  const { signInWithEmail, signInWithParentCredentials, signInWithTeacherCredentials } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -22,7 +22,15 @@ const Login: React.FC = () => {
 
     try {
       setLoading(true);
-      await signInWithEmail(email.trim(), password);
+      // Try Firebase Auth first (primary for admins)
+      try {
+        await signInWithEmail(email.trim(), password);
+      } catch (firebaseErr: any) {
+        console.log("Firebase login failed, trying teacher table credentials...");
+        // If Firebase fails (e.g. user not found), try teacher table credentials
+        await signInWithTeacherCredentials(email.trim(), password);
+      }
+      
       setSuccess("Đăng nhập thành công! Chuyển hướng...");
       // Get the redirect path from location state, or default to /workspace
       const from = (location.state as any)?.from?.pathname || "/workspace";
@@ -31,9 +39,9 @@ const Login: React.FC = () => {
       console.error("Login error:", err);
 
       // Handle specific errors
-      if (err.message === "Invalid email or password") {
+      if (err.message === "Invalid email or password" || err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password") {
         setError(
-          "Email hoặc mật khẩu không hợp lệ. Vui lòng liên hệ quản trị viên nếu bạn cần quyền truy cập tài khoản."
+          "Email hoặc mật khẩu không hợp lệ. Vui lòng kiểm tra lại thông tin hoặc liên hệ quản trị viên."
         );
       } else if (err.message === "Failed to fetch teachers data") {
         setError("Không thể kết nối với máy chủ. Vui lòng thử lại sau.");
@@ -42,7 +50,7 @@ const Login: React.FC = () => {
           "Không tìm thấy tài khoản giáo viên nào. Vui lòng liên hệ quản trị viên."
         );
       } else {
-        setError("Đăng nhập không thành công. Vui lòng thử lại.");
+        setError("Đăng nhập không thành công: " + (err.message || "Vui lòng thử lại."));
       }
     } finally {
       setLoading(false);

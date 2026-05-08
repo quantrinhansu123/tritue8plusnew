@@ -97,6 +97,8 @@ const ClassFormModal = ({
   }, []);
 
   useEffect(() => {
+    if (!open) return; // Chỉ thao tác với form khi Modal đang mở
+
     if (editingClass) {
       const schedules = editingClass["Lịch học"]?.map((s) => ({
         day: s["Thứ"],
@@ -122,7 +124,7 @@ const ClassFormModal = ({
     } else {
       form.resetFields();
     }
-  }, [editingClass, form]);
+  }, [editingClass, form, open]);
 
   // Check for schedule conflicts
   const checkScheduleConflict = (
@@ -240,7 +242,6 @@ const ClassFormModal = ({
         "Student IDs": editingClass?.["Student IDs"] || [],
         "Lịch học": schedules,
         "Phòng học": firstScheduleRoom || "",
-        "Địa điểm": selectedRoom ? `${selectedRoom["Địa điểm"]} - ${selectedRoom["Tên phòng"]}` : "",
         "Học phí mỗi buổi": values.tuitionPerSession || 0,
         "Lương GV": values.teacherSalary || 0,
         "Ghi chú": values.notes || "",
@@ -346,8 +347,8 @@ const ClassFormModal = ({
           />
         </Form.Item>
 
-        <Form.Item 
-          name="tuitionPerSession" 
+        <Form.Item
+          name="tuitionPerSession"
           label="Học phí mỗi buổi"
           rules={[{ required: true, message: "Vui lòng nhập học phí" }]}
         >
@@ -361,7 +362,7 @@ const ClassFormModal = ({
               const parsed = value!.replace(/\$\s?|(,*)/g, '');
               return parsed === '' ? 0 : Number(parsed);
             }}
-            addonAfter="VNĐ"
+            suffix="VNĐ"
           />
         </Form.Item>
 
@@ -379,7 +380,7 @@ const ClassFormModal = ({
               const parsed = value!.replace(/\$\s?|(,*)/g, '');
               return parsed === '' ? 0 : Number(parsed);
             }}
-            addonAfter="VNĐ"
+            suffix="VNĐ"
           />
         </Form.Item>
 
@@ -412,8 +413,8 @@ const ClassFormModal = ({
                       {...restField}
                       name={[name, "className"]}
                     >
-                      <Input 
-                        placeholder="Tên lớp" 
+                      <Input
+                        placeholder="Tên lớp"
                         style={{ width: 150 }}
                       />
                     </Form.Item>
@@ -435,8 +436,8 @@ const ClassFormModal = ({
                       {...restField}
                       name={[name, "room"]}
                     >
-                      <Select 
-                        placeholder="Phòng học" 
+                      <Select
+                        placeholder="Phòng học"
                         style={{ width: 180 }}
                         allowClear
                         showSearch

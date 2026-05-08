@@ -71,7 +71,7 @@ const ClassManagementContent = () => {
   const [roomsMap, setRoomsMap] = useState<Record<string, any>>({});
   const [selectedMonth, setSelectedMonth] = useState<Dayjs>(dayjs());
   const [loadingSessions, setLoadingSessions] = useState(false);
-  
+
   // Inline editing state for tuition fee in student list
   const [editingTuitionStudentId, setEditingTuitionStudentId] = useState<string | null>(null);
   const [editingTuitionValue, setEditingTuitionValue] = useState<number | null>(null);
@@ -93,7 +93,7 @@ const ClassManagementContent = () => {
       message.warning("Vui lòng chọn ít nhất một lớp để xóa");
       return;
     }
-    
+
     Modal.confirm({
       title: "Xóa nhiều lớp học",
       content: `Bạn có chắc chắn muốn xóa ${selectedRowKeys.length} lớp học đã chọn?`,
@@ -237,19 +237,19 @@ const ClassManagementContent = () => {
   const handleViewDetail = async (record: Class) => {
     setViewingClass(record);
     setIsDetailModalOpen(true);
-    
+
     // Load students for this class from lop_hoc_hoc_sinh if needed
     if (record.id) {
       try {
         const enrollmentData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
         if (enrollmentData) {
           const studentsByClass: Record<string, string[]> = {};
-          
+
           Object.values(enrollmentData).forEach((item: any) => {
             const classId = item.classId || item.class_id;
             const studentId = item.studentId || item.student_id;
             const status = item.status || "active";
-            
+
             if (classId && status === "active" && studentId) {
               if (!studentsByClass[classId]) {
                 studentsByClass[classId] = [];
@@ -259,13 +259,13 @@ const ClassManagementContent = () => {
               }
             }
           });
-          
+
           // Update the map for this specific class
           setClassStudentsMap(prev => ({
             ...prev,
             ...studentsByClass
           }));
-          
+
           console.log(`📋 Loaded students for class ${record.id}:`, studentsByClass[record.id]?.length || 0);
         }
       } catch (error) {
@@ -307,7 +307,7 @@ const ClassManagementContent = () => {
         setEditingTuitionStudentId(null);
         setEditingTuitionValue(null);
         message.success("Đã cập nhật học phí riêng thành công!");
-        
+
         // Reload tuition fees
         const enrollmentData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
         if (enrollmentData) {
@@ -350,10 +350,10 @@ const ClassManagementContent = () => {
 
     try {
       message.loading({ content: "Đang đồng bộ dữ liệu học sinh từ Supabase...", key: "sync" });
-      
+
       // Fetch fresh student data from Supabase
       const studentsData = await supabaseGetAll("datasheet/Học_sinh");
-      
+
       if (studentsData && typeof studentsData === 'object') {
         // Convert from Supabase format to Firebase format for display
         const studentsArray = Object.entries(studentsData).map(
@@ -378,7 +378,7 @@ const ClassManagementContent = () => {
         const tuitionMap: Record<string, number | null> = {};
         const studentsByClass: Record<string, string[]> = {};
         const enrollmentMap: Record<string, any> = {};
-        
+
         Object.entries(enrollmentData).forEach(([enrollmentId, item]: [string, any]) => {
           // Convert from Supabase format
           const converted = convertFromSupabaseFormat(item, "lop_hoc_hoc_sinh");
@@ -388,7 +388,7 @@ const ClassManagementContent = () => {
           const studentName = converted.studentName || item.student_name || "";
           const status = converted.status || item.status || "active";
           const hocPhiRieng = converted.hocPhiRieng || item.hoc_phi_rieng;
-          
+
           if (item && classId) {
             // Store enrollment data by studentId for quick lookup
             if (studentId) {
@@ -401,7 +401,7 @@ const ClassManagementContent = () => {
                 status,
               };
             }
-            
+
             // Only include active students
             if (status === "active" && studentId) {
               if (!studentsByClass[classId]) {
@@ -411,7 +411,7 @@ const ClassManagementContent = () => {
                 studentsByClass[classId].push(studentId);
               }
             }
-            
+
             // Build tuition map
             if (studentCode && classId) {
               // Get class code from classId
@@ -423,22 +423,22 @@ const ClassManagementContent = () => {
             }
           }
         });
-        
+
         setTuitionFees(tuitionMap);
         setClassStudentsMap(studentsByClass);
         setEnrollmentDataMap(enrollmentMap);
         console.log("✅ Đã đồng bộ enrollment data từ Supabase");
       }
 
-      message.success({ 
-        content: `Đã đồng bộ dữ liệu cho ${studentIds.length} học sinh từ Supabase`, 
+      message.success({
+        content: `Đã đồng bộ dữ liệu cho ${studentIds.length} học sinh từ Supabase`,
         key: "sync",
         duration: 3
       });
     } catch (error) {
       console.error("Error syncing students:", error);
-      message.error({ 
-        content: `Có lỗi xảy ra khi đồng bộ dữ liệu: ${error instanceof Error ? error.message : "Unknown error"}`, 
+      message.error({
+        content: `Có lỗi xảy ra khi đồng bộ dữ liệu: ${error instanceof Error ? error.message : "Unknown error"}`,
         key: "sync",
         duration: 5
       });
@@ -462,7 +462,7 @@ const ClassManagementContent = () => {
     if ((!studentIds || studentIds.length === 0) && viewingClass?.id) {
       studentIds = classStudentsMap[viewingClass.id] || [];
     }
-    
+
     if (studentIds.length === 0) {
       message.warning("Lớp học chưa có học sinh nào");
       return;
@@ -488,18 +488,18 @@ const ClassManagementContent = () => {
           console.log(`📋 Starting to fill tuition fees for ${studentIds.length} students`);
           console.log(`📋 Class ID: ${viewingClass.id}, Class Code: ${classCode}`);
           console.log(`📋 Tuition Fee: ${classTuitionFee}`);
-          
+
           // Update all students in parallel - save to lop_hoc_hoc_sinh table
           const updatePromises = studentIds.map(async (studentId) => {
             // Get student data from hoc_sinh table (primary source)
             const student = students.find((s) => s.id === studentId);
-            
+
             // Get existing enrollment data if available (optional)
             const enrollment = enrollmentDataMap[studentId];
-            
+
             // Get student code - prioritize from hoc_sinh table, then enrollment, then fallback to studentId
             const studentCode = student?.["Mã học sinh"] || student?.ma_hoc_sinh || enrollment?.studentCode || enrollment?.student_code || studentId;
-            
+
             // Get student name - prioritize from hoc_sinh table, then enrollment
             const studentName = student?.["Họ và tên"] || student?.ho_va_ten || enrollment?.studentName || enrollment?.student_name || "";
 
@@ -514,7 +514,7 @@ const ClassManagementContent = () => {
                 student_name: studentName,
                 hoc_phi_rieng: classTuitionFee,
               });
-              
+
               // Use upsert to create if not exists, update if exists
               const success = await supabaseSet("datasheet/Lớp_học/Học_sinh", {
                 id: enrollmentId,
@@ -551,7 +551,7 @@ const ClassManagementContent = () => {
             const tuitionMap: Record<string, number | null> = {};
             const studentsByClass: Record<string, string[]> = {};
             const enrollmentMap: Record<string, any> = {};
-            
+
             Object.entries(enrollmentData).forEach(([enrollmentId, item]: [string, any]) => {
               const classId = item.classId || item.class_id;
               const studentId = item.studentId || item.student_id;
@@ -559,7 +559,7 @@ const ClassManagementContent = () => {
               const studentName = item.studentName || item.student_name;
               const status = item.status || "active";
               const hocPhiRieng = item.hocPhiRieng || item.hoc_phi_rieng;
-              
+
               if (item && classId) {
                 // Store enrollment data by studentId
                 if (studentId) {
@@ -572,7 +572,7 @@ const ClassManagementContent = () => {
                     status,
                   };
                 }
-                
+
                 // Build students by class map
                 if (status === "active" && studentId) {
                   if (!studentsByClass[classId]) {
@@ -582,7 +582,7 @@ const ClassManagementContent = () => {
                     studentsByClass[classId].push(studentId);
                   }
                 }
-                
+
                 // Build tuition map
                 if (studentCode && classId) {
                   const classData = classes.find(c => c.id === classId);
@@ -593,7 +593,7 @@ const ClassManagementContent = () => {
                 }
               }
             });
-            
+
             setTuitionFees(tuitionMap);
             setClassStudentsMap(prev => ({ ...prev, ...studentsByClass }));
             setEnrollmentDataMap(prev => ({ ...prev, ...enrollmentMap }));
@@ -784,7 +784,7 @@ const ClassManagementContent = () => {
           const tuitionMap: Record<string, number | null> = {};
           const studentsByClass: Record<string, string[]> = {};
           const enrollmentMap: Record<string, any> = {};
-          
+
           Object.entries(enrollmentData).forEach(([enrollmentId, item]: [string, any]) => {
             // Handle both camelCase (after conversion) and snake_case (raw from Supabase)
             const classId = item.classId || item.class_id;
@@ -794,7 +794,7 @@ const ClassManagementContent = () => {
             const studentName = item.studentName || item.student_name || "";
             const status = item.status || "active";
             const hocPhiRieng = item.hocPhiRieng || item.hoc_phi_rieng;
-            
+
             console.log(`📋 Enrollment ${enrollmentId}:`, {
               studentId,
               studentName,
@@ -802,7 +802,7 @@ const ClassManagementContent = () => {
               classId,
               rawItem: item
             });
-            
+
             if (item && classId) {
               // Store enrollment data by studentId for quick lookup
               if (studentId) {
@@ -815,7 +815,7 @@ const ClassManagementContent = () => {
                   status,
                 };
               }
-              
+
               // Only include active students
               if (status === "active" && studentId) {
                 if (!studentsByClass[classId]) {
@@ -825,7 +825,7 @@ const ClassManagementContent = () => {
                   studentsByClass[classId].push(studentId);
                 }
               }
-              
+
               // Build tuition map
               if (studentCode && classId) {
                 // Get class code from classId
@@ -837,11 +837,11 @@ const ClassManagementContent = () => {
               }
             }
           });
-          
+
           console.log("📊 Loaded class students map:", studentsByClass);
           console.log("📊 Loaded tuition fees map:", tuitionMap);
           console.log("📊 Loaded enrollment data map:", enrollmentMap);
-          
+
           setTuitionFees(tuitionMap);
           setClassStudentsMap(studentsByClass);
           setEnrollmentDataMap(enrollmentMap);
@@ -851,7 +851,54 @@ const ClassManagementContent = () => {
       }
     };
     fetchData();
-  }, [classes]);
+
+    // Subscribe to students changes
+    const unsubStudents = supabaseOnValue("datasheet/Học_sinh", (data) => {
+      if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+        const studentsArray = Object.entries(data).map(([id, val]: [string, any]) => {
+          const converted = convertFromSupabaseFormat(val, "hoc_sinh");
+          return { id, ...converted };
+        });
+        setStudents(studentsArray);
+      }
+    });
+
+    // Subscribe to enrollment changes
+    const unsubEnrollments = supabaseOnValue("datasheet/Lớp_học/Học_sinh", (data) => {
+      if (data) {
+        const tuitionMap: Record<string, number | null> = {};
+        const studentsByClass: Record<string, string[]> = {};
+        const enrollmentMap: Record<string, any> = {};
+
+        Object.entries(data).forEach(([enrollmentId, item]: [string, any]) => {
+          const classId = item.classId || item.class_id;
+          const studentId = item.studentId || item.student_id;
+          const studentCode = item.studentCode || item.student_code;
+          const status = item.status || "active";
+          const hocPhiRieng = item.hocPhiRieng || item.hoc_phi_rieng;
+
+          if (item && classId) {
+            if (studentId) {
+              enrollmentMap[studentId] = { studentId, studentCode, classId, hocPhiRieng, status };
+            }
+            if (status === "active" && studentId) {
+              if (!studentsByClass[classId]) studentsByClass[classId] = [];
+              if (!studentsByClass[classId].includes(studentId)) studentsByClass[classId].push(studentId);
+            }
+          }
+        });
+
+        setTuitionFees(tuitionMap);
+        setClassStudentsMap(studentsByClass);
+        setEnrollmentDataMap(enrollmentMap);
+      }
+    });
+
+    return () => {
+      if (unsubStudents) unsubStudents();
+      if (unsubEnrollments) unsubEnrollments();
+    };
+  }, []);
 
   // Get unique values for filters
   const uniqueSubjects = useMemo(() => {
@@ -1004,7 +1051,7 @@ const ClassManagementContent = () => {
       dataIndex: "Học phí mỗi buổi",
       key: "tuition",
       width: 130,
-      render: (fee: number) => 
+      render: (fee: number) =>
         fee ? `${fee.toLocaleString('vi-VN')} đ` : "-",
     },
     {
@@ -1394,82 +1441,82 @@ const ClassManagementContent = () => {
                 children: (
                   <div>
                     <Descriptions column={2} bordered>
-              <Descriptions.Item label="Mã lớp">
-                {viewingClass["Mã lớp"]}
-              </Descriptions.Item>
-              <Descriptions.Item label="Tên lớp">
-                {viewingClass["Tên lớp"]}
-              </Descriptions.Item>
-              <Descriptions.Item label="Môn học">
-                {subjectMap[viewingClass["Môn học"]] || viewingClass["Môn học"]}
-              </Descriptions.Item>
-              <Descriptions.Item label="Khối">
-                {viewingClass["Khối"]}
-              </Descriptions.Item>
-              <Descriptions.Item label="Giáo viên chủ nhiệm">
-                {viewingClass["Giáo viên chủ nhiệm"]}
-              </Descriptions.Item>
-              <Descriptions.Item label="Lương GV">
-                {viewingClass["Lương GV"] ? `${viewingClass["Lương GV"].toLocaleString('vi-VN')} đ` : "-"}
-              </Descriptions.Item>
-              <Descriptions.Item label="Lịch học trong tuần">
-                {viewingClass["Lịch học"] && viewingClass["Lịch học"].length > 0 ? (
-                  <div>
-                    {viewingClass["Lịch học"].map((schedule, index) => (
-                      <div key={index} style={{ marginBottom: index < viewingClass["Lịch học"].length - 1 ? "8px" : "0" }}>
-                        <Tag color="blue">
-                          Thứ {schedule["Thứ"]}: {schedule["Giờ bắt đầu"]} - {schedule["Giờ kết thúc"]}
+                      <Descriptions.Item label="Mã lớp">
+                        {viewingClass["Mã lớp"]}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Tên lớp">
+                        {viewingClass["Tên lớp"]}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Môn học">
+                        {subjectMap[viewingClass["Môn học"]] || viewingClass["Môn học"]}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Khối">
+                        {viewingClass["Khối"]}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Giáo viên chủ nhiệm">
+                        {viewingClass["Giáo viên chủ nhiệm"]}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Lương GV">
+                        {viewingClass["Lương GV"] ? `${viewingClass["Lương GV"].toLocaleString('vi-VN')} đ` : "-"}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Lịch học trong tuần">
+                        {viewingClass["Lịch học"] && viewingClass["Lịch học"].length > 0 ? (
+                          <div>
+                            {viewingClass["Lịch học"].map((schedule, index) => (
+                              <div key={index} style={{ marginBottom: index < viewingClass["Lịch học"].length - 1 ? "8px" : "0" }}>
+                                <Tag color="blue">
+                                  Thứ {schedule["Thứ"]}: {schedule["Giờ bắt đầu"]} - {schedule["Giờ kết thúc"]}
+                                </Tag>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: "#999" }}>Chưa có lịch học</span>
+                        )}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Số học sinh">
+                        {viewingClass["Student IDs"]?.length || 0}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Trạng thái">
+                        <Tag
+                          color={
+                            viewingClass["Trạng thái"] === "active" ? "green" : "red"
+                          }
+                        >
+                          {viewingClass["Trạng thái"] === "active"
+                            ? "Hoạt động"
+                            : "Ngừng"}
                         </Tag>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <span style={{ color: "#999" }}>Chưa có lịch học</span>
-                )}
-              </Descriptions.Item>
-              <Descriptions.Item label="Số học sinh">
-                {viewingClass["Student IDs"]?.length || 0}
-              </Descriptions.Item>
-              <Descriptions.Item label="Trạng thái">
-                <Tag
-                  color={
-                    viewingClass["Trạng thái"] === "active" ? "green" : "red"
-                  }
-                >
-                  {viewingClass["Trạng thái"] === "active"
-                    ? "Hoạt động"
-                    : "Ngừng"}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Ngày tạo" span={2}>
-                {new Date(viewingClass["Ngày tạo"]).toLocaleString("vi-VN")}
-              </Descriptions.Item>
-              <Descriptions.Item label="Người tạo" span={2}>
-                {viewingClass["Người tạo"]}
-              </Descriptions.Item>
-            </Descriptions>
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Ngày tạo" span={2}>
+                        {new Date(viewingClass["Ngày tạo"]).toLocaleString("vi-VN")}
+                      </Descriptions.Item>
+                      <Descriptions.Item label="Người tạo" span={2}>
+                        {viewingClass["Người tạo"]}
+                      </Descriptions.Item>
+                    </Descriptions>
 
                     {(() => {
                       // Get student IDs from class or from lop_hoc_hoc_sinh table
                       let studentIds = viewingClass["Student IDs"] || viewingClass["student_ids"] || [];
-                      
+
                       // Fallback: Load from lop_hoc_hoc_sinh if not in class data
                       if ((!studentIds || studentIds.length === 0) && viewingClass?.id) {
                         studentIds = classStudentsMap[viewingClass.id] || [];
                         console.log(`📋 Using fallback: Loaded ${studentIds.length} students from lop_hoc_hoc_sinh for class ${viewingClass.id}`);
                       }
-                      
+
                       console.log(`📋 Class ${viewingClass?.id}: Student IDs from class =`, viewingClass["Student IDs"]?.length || 0);
                       console.log(`📋 Class ${viewingClass?.id}: Student IDs from map =`, classStudentsMap[viewingClass?.id || ""]?.length || 0);
                       console.log(`📋 Final studentIds =`, studentIds.length);
-                      
+
                       const hasStudents = Array.isArray(studentIds) && studentIds.length > 0;
-                      
+
                       if (!hasStudents) {
                         console.log(`⚠️ No students found for class ${viewingClass?.id}`);
                         return null;
                       }
-                      
+
                       return (
                         <div style={{ marginTop: 24 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1492,260 +1539,260 @@ const ClassManagementContent = () => {
                               </Button>
                             </Space>
                           </div>
-                  <Table
-                    dataSource={studentIds
-                      .map((studentId) => {
-                        const student = students.find((s) => s.id === studentId);
-                        const enrollment = enrollmentDataMap[studentId];
-                        
-                        // Debug: Log if student not found
-                        if (!student && !enrollment) {
-                          console.warn(`⚠️ Student ${studentId} not found in students array or enrollment map`);
-                          console.warn(`   Total students loaded: ${students.length}`);
-                          console.warn(`   Total enrollments: ${Object.keys(enrollmentDataMap).length}`);
-                          console.warn(`   Student IDs in students:`, students.map(s => s.id).slice(0, 5));
-                        }
-                        
-                        // Get student info - prioritize student_name from lop_hoc_hoc_sinh
-                        let studentName = enrollment?.studentName || enrollment?.student_name || student?.["Họ và tên"] || student?.ho_va_ten || "";
-                        let studentCode = enrollment?.studentCode || enrollment?.student_code || student?.["Mã học sinh"] || student?.ma_hoc_sinh || "";
-                        let studentPhone = student?.["Số điện thoại"] || student?.so_dien_thoai || "-";
-                        let parentPhone = student?.["SĐT phụ huynh"] || student?.sdt_phu_huynh || "-";
-                        let studentEmail = student?.["Email"] || student?.email || "-";
-                        let studentStatus = student?.["Trạng thái"] || student?.trang_thai || enrollment?.status || "-";
-                        
-                        // If no name found, show placeholder with warning
-                        if (!studentName) {
-                          console.warn(`⚠️ No name found for student ${studentId}. Student exists: ${!!student}, Enrollment exists: ${!!enrollment}`);
-                          studentName = `[Chưa có tên] ${studentId.substring(0, 8)}...`;
-                        }
-                        
-                        // Get tuition fee from new table: "Mã học sinh-Mã lớp"
-                        const classCode = viewingClass["Mã lớp"] || "";
-                        let tuitionFee = null;
-                        
-                        if (studentCode && classCode) {
-                          const tuitionKey = `${studentCode}-${classCode}`;
-                          tuitionFee = tuitionFees[tuitionKey] || null;
-                        }
-                        
-                        // Also check enrollment data for hoc_phi_rieng
-                        if (tuitionFee === null && enrollment?.hocPhiRieng !== undefined) {
-                          tuitionFee = enrollment.hocPhiRieng;
-                        }
-                        
-                        return {
-                          key: studentId,
-                          id: studentId,
-                          "Mã học sinh": studentCode || studentId.substring(0, 8),
-                          "Họ và tên": studentName,
-                          "Số điện thoại": studentPhone,
-                          "SĐT phụ huynh": parentPhone,
-                          "hoc_phi_rieng": tuitionFee,
-                          "Email": studentEmail,
-                          "Trạng thái": studentStatus,
-                        };
-                      })
-                      .filter((item) => item !== null)}
-                    columns={[
-                      {
-                        title: "STT",
-                        key: "index",
-                        width: 60,
-                        align: "center" as const,
-                        render: (_: any, __: any, index: number) => index + 1,
-                      },
-                      {
-                        title: "Mã học sinh",
-                        dataIndex: "Mã học sinh",
-                        key: "code",
-                        width: 120,
-                      },
-                      {
-                        title: "Họ và tên",
-                        dataIndex: "Họ và tên",
-                        key: "name",
-                        width: 200,
-                        render: (text: string) => <strong>{text}</strong>,
-                      },
-                      {
-                        title: "Học phí riêng",
-                        dataIndex: "hoc_phi_rieng",
-                        key: "hoc_phi_rieng",
-                        width: 180,
-                        render: (fee: number, record: any) => {
-                          const isEditing = editingTuitionStudentId === record.id;
-                          const currentValue = isEditing ? editingTuitionValue : fee;
-                          
-                          if (isEditing) {
-                            return (
-                              <InputNumber<number>
-                                value={currentValue || undefined}
-                                onChange={(value) => setEditingTuitionValue(value || null)}
-                                onPressEnter={async () => {
-                                  if (editingTuitionStudentId) {
-                                    await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                          <Table
+                            dataSource={studentIds
+                              .map((studentId) => {
+                                const student = students.find((s) => s.id === studentId);
+                                const enrollment = enrollmentDataMap[studentId];
+
+                                // Debug: Log if student not found
+                                if (!student && !enrollment) {
+                                  console.warn(`⚠️ Student ${studentId} not found in students array or enrollment map`);
+                                  console.warn(`   Total students loaded: ${students.length}`);
+                                  console.warn(`   Total enrollments: ${Object.keys(enrollmentDataMap).length}`);
+                                  console.warn(`   Student IDs in students:`, students.map(s => s.id).slice(0, 5));
+                                }
+
+                                // Get student info - prioritize student_name from lop_hoc_hoc_sinh
+                                let studentName = enrollment?.studentName || enrollment?.student_name || student?.["Họ và tên"] || student?.ho_va_ten || "";
+                                let studentCode = enrollment?.studentCode || enrollment?.student_code || student?.["Mã học sinh"] || student?.ma_hoc_sinh || "";
+                                let studentPhone = student?.["Số điện thoại"] || student?.so_dien_thoai || "-";
+                                let parentPhone = student?.["SĐT phụ huynh"] || student?.sdt_phu_huynh || "-";
+                                let studentEmail = student?.["Email"] || student?.email || "-";
+                                let studentStatus = student?.["Trạng thái"] || student?.trang_thai || enrollment?.status || "-";
+
+                                // If no name found, show placeholder with warning
+                                if (!studentName) {
+                                  console.warn(`⚠️ No name found for student ${studentId}. Student exists: ${!!student}, Enrollment exists: ${!!enrollment}`);
+                                  studentName = `[Chưa có tên] ${studentId.substring(0, 8)}...`;
+                                }
+
+                                // Get tuition fee from new table: "Mã học sinh-Mã lớp"
+                                const classCode = viewingClass["Mã lớp"] || "";
+                                let tuitionFee = null;
+
+                                if (studentCode && classCode) {
+                                  const tuitionKey = `${studentCode}-${classCode}`;
+                                  tuitionFee = tuitionFees[tuitionKey] || null;
+                                }
+
+                                // Also check enrollment data for hoc_phi_rieng
+                                if (tuitionFee === null && enrollment?.hocPhiRieng !== undefined) {
+                                  tuitionFee = enrollment.hocPhiRieng;
+                                }
+
+                                return {
+                                  key: studentId,
+                                  id: studentId,
+                                  "Mã học sinh": studentCode || studentId.substring(0, 8),
+                                  "Họ và tên": studentName,
+                                  "Số điện thoại": studentPhone,
+                                  "SĐT phụ huynh": parentPhone,
+                                  "hoc_phi_rieng": tuitionFee,
+                                  "Email": studentEmail,
+                                  "Trạng thái": studentStatus,
+                                };
+                              })
+                              .filter((item) => item !== null)}
+                            columns={[
+                              {
+                                title: "STT",
+                                key: "index",
+                                width: 60,
+                                align: "center" as const,
+                                render: (_: any, __: any, index: number) => index + 1,
+                              },
+                              {
+                                title: "Mã học sinh",
+                                dataIndex: "Mã học sinh",
+                                key: "code",
+                                width: 120,
+                              },
+                              {
+                                title: "Họ và tên",
+                                dataIndex: "Họ và tên",
+                                key: "name",
+                                width: 200,
+                                render: (text: string) => <strong>{text}</strong>,
+                              },
+                              {
+                                title: "Học phí riêng",
+                                dataIndex: "hoc_phi_rieng",
+                                key: "hoc_phi_rieng",
+                                width: 180,
+                                render: (fee: number, record: any) => {
+                                  const isEditing = editingTuitionStudentId === record.id;
+                                  const currentValue = isEditing ? editingTuitionValue : fee;
+
+                                  if (isEditing) {
+                                    return (
+                                      <InputNumber<number>
+                                        value={currentValue || undefined}
+                                        onChange={(value) => setEditingTuitionValue(value || null)}
+                                        onPressEnter={async () => {
+                                          if (editingTuitionStudentId) {
+                                            await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                                          }
+                                        }}
+                                        onBlur={async () => {
+                                          if (editingTuitionStudentId) {
+                                            await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                                          }
+                                        }}
+                                        min={0}
+                                        step={10000}
+                                        style={{ width: "100%" }}
+                                        formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                        parser={(value) => {
+                                          const parsed = value!.replace(/\$\s?|(,*)/g, '');
+                                          return parsed === '' ? 0 : Number(parsed);
+                                        }}
+                                        autoFocus
+                                      />
+                                    );
                                   }
-                                }}
-                                onBlur={async () => {
-                                  if (editingTuitionStudentId) {
-                                    await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
-                                  }
-                                }}
-                                min={0}
-                                step={10000}
-                                style={{ width: "100%" }}
-                                formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                                parser={(value) => {
-                                  const parsed = value!.replace(/\$\s?|(,*)/g, '');
-                                  return parsed === '' ? 0 : Number(parsed);
-                                }}
-                                autoFocus
-                              />
-                            );
-                          }
-                          
-                          return (
-                            <div
-                              onClick={async () => {
-                                // Save previous editing row if exists
-                                if (editingTuitionStudentId && editingTuitionStudentId !== record.id) {
-                                  await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
-                                }
-                                setEditingTuitionStudentId(record.id);
-                                setEditingTuitionValue(fee || null);
-                              }}
-                              style={{
-                                cursor: "pointer",
-                                padding: "4px 8px",
-                                borderRadius: "4px",
-                                minHeight: "32px",
-                                display: "flex",
-                                alignItems: "center",
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = "#f5f5f5";
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = "transparent";
-                              }}
-                            >
-                              {fee ? `${fee.toLocaleString('vi-VN')} đ` : "-"}
-                            </div>
-                          );
-                        },
-                      },
-                      {
-                        title: "Hành động",
-                        key: "action",
-                        width: 100,
-                        fixed: "right" as const,
-                        render: (_: any, record: any) => (
-                          <Popconfirm
-                            title="Xóa học sinh khỏi lớp"
-                            description={`Bạn có chắc chắn muốn xóa "${record["Họ và tên"]}" khỏi lớp này?`}
-                            onConfirm={async () => {
-                              try {
-                                if (!viewingClass?.id) {
-                                  message.error("Không tìm thấy thông tin lớp học");
-                                  return;
-                                }
-                                await removeStudentFromClass(viewingClass.id, record.id);
-                                message.success(`Đã xóa "${record["Họ và tên"]}" khỏi lớp`);
-                                
-                                // Refresh enrollment data
-                                const enrollmentData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
-                                if (enrollmentData && typeof enrollmentData === 'object') {
-                                  const tuitionMap: Record<string, number | null> = {};
-                                  const studentsByClass: Record<string, string[]> = {};
-                                  const enrollmentMap: Record<string, any> = {};
-                                  
-                                  Object.entries(enrollmentData).forEach(([enrollmentId, item]: [string, any]) => {
-                                    const converted = convertFromSupabaseFormat(item, "lop_hoc_hoc_sinh");
-                                    const classId = converted.classId || item.class_id;
-                                    const studentId = converted.studentId || item.student_id;
-                                    const studentCode = converted.studentCode || item.student_code;
-                                    const studentName = converted.studentName || item.student_name || "";
-                                    const status = converted.status || item.status || "active";
-                                    const hocPhiRieng = converted.hocPhiRieng || item.hoc_phi_rieng;
-                                    
-                                    if (item && classId) {
-                                      if (studentId) {
-                                        enrollmentMap[studentId] = {
-                                          studentId,
-                                          studentCode,
-                                          studentName,
-                                          classId,
-                                          hocPhiRieng,
-                                          status,
-                                        };
-                                      }
-                                      
-                                      if (status === "active" && studentId) {
-                                        if (!studentsByClass[classId]) {
-                                          studentsByClass[classId] = [];
+
+                                  return (
+                                    <div
+                                      onClick={async () => {
+                                        // Save previous editing row if exists
+                                        if (editingTuitionStudentId && editingTuitionStudentId !== record.id) {
+                                          await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
                                         }
-                                        if (!studentsByClass[classId].includes(studentId)) {
-                                          studentsByClass[classId].push(studentId);
+                                        setEditingTuitionStudentId(record.id);
+                                        setEditingTuitionValue(fee || null);
+                                      }}
+                                      style={{
+                                        cursor: "pointer",
+                                        padding: "4px 8px",
+                                        borderRadius: "4px",
+                                        minHeight: "32px",
+                                        display: "flex",
+                                        alignItems: "center",
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = "#f5f5f5";
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = "transparent";
+                                      }}
+                                    >
+                                      {fee ? `${fee.toLocaleString('vi-VN')} đ` : "-"}
+                                    </div>
+                                  );
+                                },
+                              },
+                              {
+                                title: "Hành động",
+                                key: "action",
+                                width: 100,
+                                fixed: "right" as const,
+                                render: (_: any, record: any) => (
+                                  <Popconfirm
+                                    title="Xóa học sinh khỏi lớp"
+                                    description={`Bạn có chắc chắn muốn xóa "${record["Họ và tên"]}" khỏi lớp này?`}
+                                    onConfirm={async () => {
+                                      try {
+                                        if (!viewingClass?.id) {
+                                          message.error("Không tìm thấy thông tin lớp học");
+                                          return;
                                         }
-                                      }
-                                      
-                                      if (studentCode && classId) {
-                                        const classData = classes.find(c => c.id === classId);
-                                        if (classData && classData["Mã lớp"]) {
-                                          const key = `${studentCode}-${classData["Mã lớp"]}`;
-                                          tuitionMap[key] = hocPhiRieng || null;
+                                        await removeStudentFromClass(viewingClass.id, record.id);
+                                        message.success(`Đã xóa "${record["Họ và tên"]}" khỏi lớp`);
+
+                                        // Refresh enrollment data
+                                        const enrollmentData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
+                                        if (enrollmentData && typeof enrollmentData === 'object') {
+                                          const tuitionMap: Record<string, number | null> = {};
+                                          const studentsByClass: Record<string, string[]> = {};
+                                          const enrollmentMap: Record<string, any> = {};
+
+                                          Object.entries(enrollmentData).forEach(([enrollmentId, item]: [string, any]) => {
+                                            const converted = convertFromSupabaseFormat(item, "lop_hoc_hoc_sinh");
+                                            const classId = converted.classId || item.class_id;
+                                            const studentId = converted.studentId || item.student_id;
+                                            const studentCode = converted.studentCode || item.student_code;
+                                            const studentName = converted.studentName || item.student_name || "";
+                                            const status = converted.status || item.status || "active";
+                                            const hocPhiRieng = converted.hocPhiRieng || item.hoc_phi_rieng;
+
+                                            if (item && classId) {
+                                              if (studentId) {
+                                                enrollmentMap[studentId] = {
+                                                  studentId,
+                                                  studentCode,
+                                                  studentName,
+                                                  classId,
+                                                  hocPhiRieng,
+                                                  status,
+                                                };
+                                              }
+
+                                              if (status === "active" && studentId) {
+                                                if (!studentsByClass[classId]) {
+                                                  studentsByClass[classId] = [];
+                                                }
+                                                if (!studentsByClass[classId].includes(studentId)) {
+                                                  studentsByClass[classId].push(studentId);
+                                                }
+                                              }
+
+                                              if (studentCode && classId) {
+                                                const classData = classes.find(c => c.id === classId);
+                                                if (classData && classData["Mã lớp"]) {
+                                                  const key = `${studentCode}-${classData["Mã lớp"]}`;
+                                                  tuitionMap[key] = hocPhiRieng || null;
+                                                }
+                                              }
+                                            }
+                                          });
+
+                                          setTuitionFees(tuitionMap);
+                                          setClassStudentsMap(studentsByClass);
+                                          setEnrollmentDataMap(enrollmentMap);
                                         }
+
+                                        // Refresh class data
+                                        const classData = await supabaseGetAll("datasheet/Lớp_học");
+                                        if (classData && typeof classData === 'object' && classData[viewingClass.id]) {
+                                          const converted = convertFromSupabaseFormat(classData[viewingClass.id], "lop_hoc");
+                                          setViewingClass({ id: viewingClass.id, ...converted } as Class);
+                                        }
+                                      } catch (error) {
+                                        console.error("Error removing student:", error);
+                                        message.error("Không thể xóa học sinh khỏi lớp");
                                       }
-                                    }
-                                  });
-                                  
-                                  setTuitionFees(tuitionMap);
-                                  setClassStudentsMap(studentsByClass);
-                                  setEnrollmentDataMap(enrollmentMap);
-                                }
-                                
-                                // Refresh class data
-                                const classData = await supabaseGetAll("datasheet/Lớp_học");
-                                if (classData && typeof classData === 'object' && classData[viewingClass.id]) {
-                                  const converted = convertFromSupabaseFormat(classData[viewingClass.id], "lop_hoc");
-                                  setViewingClass({ id: viewingClass.id, ...converted } as Class);
-                                }
-                              } catch (error) {
-                                console.error("Error removing student:", error);
-                                message.error("Không thể xóa học sinh khỏi lớp");
-                              }
-                            }}
-                            okText="Xóa"
-                            cancelText="Hủy"
-                            okButtonProps={{ danger: true }}
-                          >
-                            <Button
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                              size="small"
-                            >
-                              Xóa
-                            </Button>
-                          </Popconfirm>
-                        ),
-                      },
-                    ]}
-                    pagination={false}
-                    size="small"
-                    scroll={{ x: 800 }}
-                  />
-                </div>
+                                    }}
+                                    okText="Xóa"
+                                    cancelText="Hủy"
+                                    okButtonProps={{ danger: true }}
+                                  >
+                                    <Button
+                                      type="text"
+                                      danger
+                                      icon={<DeleteOutlined />}
+                                      size="small"
+                                    >
+                                      Xóa
+                                    </Button>
+                                  </Popconfirm>
+                                ),
+                              },
+                            ]}
+                            pagination={false}
+                            size="small"
+                            scroll={{ x: 800 }}
+                          />
+                        </div>
                       );
                     })()}
 
-            {viewingClass["Ghi chú"] && (
-              <div style={{ marginTop: 24 }}>
-                <h4>Ghi chú:</h4>
-                <p>{viewingClass["Ghi chú"]}</p>
-              </div>
-            )}
+                    {viewingClass["Ghi chú"] && (
+                      <div style={{ marginTop: 24 }}>
+                        <h4>Ghi chú:</h4>
+                        <p>{viewingClass["Ghi chú"]}</p>
+                      </div>
+                    )}
                   </div>
                 ),
               },
@@ -2008,7 +2055,7 @@ const GradeReportModal: React.FC<{
           "Điểm trung bình lớp:",
           (
             gradeData.reduce((sum: number, d: any) => sum + d.averageScore, 0) /
-              gradeData.length || 0
+            gradeData.length || 0
           ).toFixed(1),
         ],
         [
@@ -2175,11 +2222,11 @@ const GradeReportModal: React.FC<{
     // Dynamic score columns
     ...(scoreColumns.length > 0
       ? [
-          {
-            title: "Điểm các bài kiểm tra",
-            children: scoreColumns,
-          },
-        ]
+        {
+          title: "Điểm các bài kiểm tra",
+          children: scoreColumns,
+        },
+      ]
       : []),
     {
       title: "Tổng kết",

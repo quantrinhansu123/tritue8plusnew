@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
-import { ref, onValue } from 'firebase/database';
-import { database } from '../firebase';
 import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat } from '@/utils/supabaseHelpers';
 import { AttendanceSession } from '../types';
 import StudentReport from './StudentReport';

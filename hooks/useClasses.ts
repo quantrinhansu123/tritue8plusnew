@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Class } from '../types';
 import { message } from 'antd';
-import { 
-  supabaseGetAll, 
-  supabaseSet, 
-  supabaseUpdate, 
-  supabaseRemove,
-  supabaseOnValue,
-  convertToSupabaseFormat,
-  convertFromSupabaseFormat
+import {
+    supabaseGetAll,
+    supabaseSet,
+    supabaseUpdate,
+    supabaseRemove,
+    supabaseOnValue,
+    convertToSupabaseFormat,
+    convertFromSupabaseFormat
 } from '../utils/supabaseHelpers';
 import { supabaseAdmin } from '@/supabase';
 
@@ -73,7 +73,7 @@ export const useClasses = () => {
         try {
             // Generate a new ID (similar to Firebase push)
             const newId = `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
+
             const classWithId = {
                 id: newId,
                 ...classData,
@@ -122,7 +122,7 @@ export const useClasses = () => {
             const currentClass = classData[classId];
             const updatedStudentIds = [...(currentClass['Student IDs'] || []), studentId];
             const updatedStudentNames = [...(currentClass['Học sinh'] || []), studentName];
-            
+
             // Track enrollment date - use provided date or default to today
             const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
             const updatedEnrollments = { ...(currentClass['Student Enrollments'] || {}) };
@@ -182,7 +182,7 @@ export const useClasses = () => {
             // Add new students
             const updatedStudentIds = [...currentStudentIds, ...newStudents.map(s => s.id)];
             const updatedStudentNames = [...currentStudentNames, ...newStudents.map(s => s.name)];
-            
+
             // Track enrollment date for new students - use provided date or default to today
             const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
             const updatedEnrollments = { ...currentEnrollments };
@@ -232,11 +232,11 @@ export const useClasses = () => {
             // Convert from Supabase format
             const currentClassRaw = classData[classId];
             const currentClass = convertFromSupabaseFormat(currentClassRaw, "lop_hoc");
-            
+
             const updatedStudentIds = (currentClass['Student IDs'] || currentClass['student_ids'] || []).filter((id: string) => id !== studentId);
             const studentIndex = (currentClass['Student IDs'] || currentClass['student_ids'] || []).indexOf(studentId);
             const updatedStudentNames = (currentClass['Học sinh'] || currentClass['hoc_sinh'] || []).filter((_: string, index: number) => index !== studentIndex);
-            
+
             // Also remove enrollment record for this student
             const currentEnrollments = currentClass['Student Enrollments'] || currentClass['student_enrollments'] || {};
             const { [studentId]: removed, ...remainingEnrollments } = currentEnrollments;
@@ -256,7 +256,7 @@ export const useClasses = () => {
             await supabaseUpdate('datasheet/Lớp_học/Học_sinh', enrollmentId, {
                 status: 'inactive',
             });
-            
+
             message.success('Đã xóa học sinh khỏi lớp');
         } catch (error) {
             console.error('Error removing student from class:', error);
