@@ -25,14 +25,13 @@ import {
 import { useClasses } from "../../hooks/useClasses";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class } from "../../types";
-import { ref, onValue, get, update } from "firebase/database";
-import { database } from "../../firebase";
 import { supabaseOnValue, supabaseUpdate, convertFromSupabaseFormat } from "../../utils/supabaseHelpers";
 import { useNavigate } from "react-router-dom";
 import AddStudentModal from "../AddStudentModal";
 import ScoreDetailModal from "../ScoreDetailModal";
 import WrapperContent from "@/components/WrapperContent";
 import UploadDocumentModal from "../UploadDocumentModal";
+import { getCloudinaryDownloadUrl } from "@/utils/cloudinaryStorage";
 
 interface Student {
   id: string;
@@ -60,6 +59,7 @@ const TeacherClassView = () => {
     null
   );
   const [roomFilter, setRoomFilter] = useState<string>("all");
+  const [loadingTeacher, setLoadingTeacher] = useState(true);
 
   const teacherId = userProfile?.teacherId || userProfile?.uid || "";
 
@@ -79,6 +79,9 @@ const TeacherClassView = () => {
           console.log("TeacherClassView - Found teacher:", { id, teacher });
           setTeacherData({ id, ...(teacher as any) });
         }
+        setLoadingTeacher(false);
+      } else {
+        setLoadingTeacher(false);
       }
     });
     return () => unsubscribe();
@@ -119,6 +122,7 @@ const TeacherClassView = () => {
 
   // Use teacherData.id if available, otherwise fallback to teacherId from profile
   const actualTeacherId = teacherData?.id || teacherId;
+  const isGlobalLoading = loading || loadingTeacher;
 
   console.log("TeacherClassView - Filter info:", {
     userProfile,
@@ -164,13 +168,17 @@ const TeacherClassView = () => {
       const currentDocuments = selectedClassForDoc["Tài liệu"] || [];
       const updatedDocuments = [...currentDocuments, documentData];
 
-      await supabaseUpdate(
+      const success = await supabaseUpdate(
         "datasheet/Lớp_học",
         selectedClassForDoc.id,
         {
           "Tài liệu": updatedDocuments,
         }
       );
+
+      if (success) {
+        message.success("Đã thêm tài liệu vào lớp học!");
+      }
     } catch (error) {
       console.error("Error adding document to class:", error);
       message.error("Lỗi khi lưu tài liệu vào lớp học");
@@ -180,17 +188,24 @@ const TeacherClassView = () => {
   // Delete document from class
   const handleDeleteDocument = async (classData: Class, docIndex: number) => {
     try {
-      const classRef = ref(database, `datasheet/Lớp_học/${classData.id}`);
       const currentDocuments = classData["Tài liệu"] || [];
       const updatedDocuments = currentDocuments.filter(
         (_, index) => index !== docIndex
       );
 
-      await update(classRef, {
-        "Tài liệu": updatedDocuments,
-      });
+      const success = await supabaseUpdate(
+        "datasheet/Lớp_học",
+        classData.id,
+        {
+          "Tài liệu": updatedDocuments,
+        }
+      );
 
-      message.success("Đã xóa tài liệu thành công!");
+      if (success) {
+        message.success("Đã xóa tài liệu thành công!");
+      } else {
+        message.error("Không thể xóa tài liệu trên hệ thống mới");
+      }
     } catch (error) {
       console.error("Error deleting document:", error);
       message.error("Lỗi khi xóa tài liệu");
@@ -269,16 +284,21 @@ const TeacherClassView = () => {
 
   if (myClasses.length === 0) {
     return (
-      <WrapperContent title="Lớp học của tôi" isLoading={loading}>
-        <div style={{ padding: "24px" }}>
-          <Empty description="Bạn chưa được phân công lớp học nào." />
+      <WrapperContent title="Lớp học của tôi" isLoading={isGlobalLoading}>
+        <div style={{ padding: "40px", textAlign: "center" }}>
+          {!isGlobalLoading && (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="Bạn chưa được phân công lớp học nào hoặc dữ liệu đang được đồng bộ."
+            />
+          )}
         </div>
       </WrapperContent>
     );
   }
 
   return (
-    <WrapperContent title="Lớp học của tôi" isLoading={loading}>
+    <WrapperContent title="Lớp học của tôi" isLoading={isGlobalLoading}>
       <Card style={{ marginBottom: 12 }}>
         <Space>
           <span style={{ fontWeight: 600 }}>Lọc theo địa điểm:</span>
@@ -434,10 +454,9 @@ const TeacherClassView = () => {
                           <Button
                             type="link"
                             icon={<LinkOutlined />}
-                            href={doc.url}
+                            href={doc.type === "file" ? getCloudinaryDownloadUrl(doc.url) : doc.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            download={doc.type === "file" ? doc.fileName || doc.name : undefined}
                           >
                             {doc.type === "file" ? "Tải xuống" : "Mở"}
                           </Button>,

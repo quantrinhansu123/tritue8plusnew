@@ -1,7 +1,5 @@
 import WrapperContent from "@/components/WrapperContent";
-import { database, DATABASE_URL_BASE } from "@/firebase";
-import { ref, onValue, update, push, remove } from "firebase/database";
-import { supabaseOnValue, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
+import { supabaseOnValue, supabaseSet, supabaseUpdate, supabaseRemove, convertFromSupabaseFormat } from "@/utils/supabaseHelpers";
 import {
   Card,
   Row,
@@ -793,8 +791,7 @@ const FinancialSummaryPage = () => {
       if (invoicesToDelete.length > 0) {
         message.loading(`Đang xóa ${invoicesToDelete.length} hóa đơn cũ...`, 0);
         const deletePromises = invoicesToDelete.map((key) => {
-          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-          return remove(invoiceRef);
+          return supabaseRemove("datasheet/Phiếu_thu_học_phí", key);
         });
         await Promise.all(deletePromises);
       }
@@ -926,17 +923,10 @@ const FinancialSummaryPage = () => {
         });
       });
 
-      // Update all invoices
-      const updatePromises = invoicesToUpdate.map(({ key, invoice }) => {
-        const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-        return update(invoiceRef, invoice);
-      });
-
       // Step 3: Create/Update invoices
       if (invoicesToUpdate.length > 0) {
         const updatePromises = invoicesToUpdate.map(({ key, invoice }) => {
-          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
-          return update(invoiceRef, invoice);
+          return supabaseSet("datasheet/Phiếu_thu_học_phí", invoice);
         });
         await Promise.all(updatePromises);
       }
@@ -985,16 +975,11 @@ const FinancialSummaryPage = () => {
 
       if (editingExpense) {
         // Update existing expense
-        const expenseRef = ref(
-          database,
-          `datasheet/Chi_phí_vận_hành/${editingExpense.id}`
-        );
-        await update(expenseRef, expenseData);
+        await supabaseUpdate("datasheet/Chi_phí_vận_hành", editingExpense.id, expenseData);
         message.success("Đã cập nhật chi phí");
       } else {
         // Add new expense
-        const expensesRef = ref(database, "datasheet/Chi_phí_vận_hành");
-        await push(expensesRef, expenseData);
+        await supabaseSet("datasheet/Chi_phí_vận_hành", expenseData);
         message.success("Đã thêm chi phí");
       }
 
@@ -1016,43 +1001,11 @@ const FinancialSummaryPage = () => {
         return;
       }
 
-      // Try Firebase SDK first
-      try {
-        const expenseRef = ref(
-          database,
-          `datasheet/Chi_phí_vận_hành/${expenseId}`
-        );
-        await remove(expenseRef);
-        message.success("Đã xóa chi phí thành công");
-        return;
-      } catch (sdkError: any) {
-        console.warn("Firebase SDK delete failed, trying REST API:", sdkError);
-
-        // Fallback: Use REST API
-        const deleteUrl = `${DATABASE_URL_BASE}/datasheet/Chi_phí_vận_hành/${encodeURIComponent(expenseId)}.json`;
-        const deleteResponse = await fetch(deleteUrl, {
-          method: "DELETE",
-        });
-
-        if (!deleteResponse.ok) {
-          const errorText = await deleteResponse.text();
-          throw new Error(`HTTP ${deleteResponse.status}: ${errorText}`);
-        }
-
-        message.success("Đã xóa chi phí thành công");
-      }
+      await supabaseRemove("datasheet/Chi_phí_vận_hành", expenseId);
+      message.success("Đã xóa chi phí thành công");
     } catch (error: any) {
       console.error("Error deleting expense:", error);
-      const errorMessage = error?.message || error?.toString() || "Lỗi không xác định";
-
-      // Check for permission errors
-      if (errorMessage.includes("permission") || errorMessage.includes("Permission") || errorMessage.includes("403")) {
-        message.error("Không có quyền xóa chi phí. Vui lòng kiểm tra quyền truy cập Firebase.");
-      } else if (errorMessage.includes("network") || errorMessage.includes("Network") || errorMessage.includes("Failed to fetch")) {
-        message.error("Lỗi kết nối mạng. Vui lòng kiểm tra kết nối và thử lại.");
-      } else {
-        message.error(`Lỗi khi xóa chi phí: ${errorMessage}`);
-      }
+      message.error(`Lỗi khi xóa chi phí: ${error.message || "Lỗi không xác định"}`);
     }
   };
 

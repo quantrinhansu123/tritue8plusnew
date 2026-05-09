@@ -199,6 +199,31 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       delete converted.metadata;
     }
   }
+  
+  // For diem_danh_sessions table
+  if (tableName === "diem_danh_sessions" || tableName === "Điểm_danh_sessions") {
+    const fieldMapping: Record<string, string> = {
+      class_id: "Class ID",
+      ma_lop: "Mã lớp",
+      ten_lop: "Tên lớp",
+      mon_hoc: "Môn học",
+      ngay: "Ngày",
+      gio_bat_dau: "Giờ bắt đầu",
+      gio_ket_thuc: "Giờ kết thúc",
+      giao_vien: "Giáo viên",
+      teacher_id: "Teacher ID",
+      diem_danh: "Điểm danh",
+      trang_thai: "Trạng thái",
+      timestamp: "Timestamp"
+    };
+
+    Object.entries(fieldMapping).forEach(([snakeCase, firebaseField]) => {
+      if (converted[snakeCase] !== undefined) {
+        converted[firebaseField] = converted[snakeCase];
+        // Don't delete snake_case version to maintain dual-compatibility
+      }
+    });
+  }
 
   // For lop_hoc_hoc_sinh table (Chi tiết học sinh trong lớp)
   if (tableName === "lop_hoc_hoc_sinh") {
@@ -242,6 +267,7 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       so_gio_da_gia_han: "Số giờ đã gia hạn",
       so_gio_con_lai: "Số giờ còn lại",
       so_gio_da_hoc: "Số giờ đã học",
+      avatar_url: "Ảnh",
       ghi_chu: "Ghi chú",
       created_at: "createdAt",
       updated_at: "updatedAt",
@@ -254,10 +280,16 @@ export const convertFromSupabaseFormat = (data: any, tableName: string): any => 
       }
     });
 
-    // Merge metadata fields back
-    if (converted.metadata && typeof converted.metadata === "object") {
-      Object.assign(converted, converted.metadata);
-      delete converted.metadata;
+    // Merge metadata fields back (handle potential multiple levels of nesting)
+    while (converted.metadata && typeof converted.metadata === "object") {
+      const { metadata: nestedMetadata, ...rest } = converted.metadata;
+      Object.assign(converted, rest);
+      if (nestedMetadata && typeof nestedMetadata === "object" && Object.keys(nestedMetadata).length > 0) {
+        converted.metadata = nestedMetadata;
+      } else {
+        delete converted.metadata;
+        break;
+      }
     }
   }
 
@@ -1306,11 +1338,12 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
       "Số giờ đã gia hạn": "so_gio_da_gia_han",
       "Số giờ còn lại": "so_gio_con_lai",
       "Số giờ đã học": "so_gio_da_hoc",
+      "Ảnh": "avatar_url",
       "Ghi chú": "ghi_chu",
     };
 
     // Convert Firebase field names to Supabase column names
-    const metadata: any = {};
+    const metadata: any = converted.metadata || {};
     Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
       if (converted[firebaseField] !== undefined && converted[firebaseField] !== null) {
         let value = converted[firebaseField];
@@ -1347,7 +1380,9 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     // Important: we must NOT move the already converted snake_case fields to metadata
     const supabaseFields = Object.values(fieldMapping);
     Object.keys(converted).forEach((key) => {
-      if (!fieldMapping[key] && !supabaseFields.includes(key) && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
+      if (key === "metadata") {
+        delete converted[key];
+      } else if (!fieldMapping[key] && !supabaseFields.includes(key) && key !== "id" && !key.includes("_") && key !== "createdAt" && key !== "updatedAt") {
         metadata[key] = converted[key];
         delete converted[key];
       }
@@ -1413,6 +1448,31 @@ export const convertToSupabaseFormat = (data: any, tableName: string, skipDefaul
     if (Object.keys(metadata).length > 0) {
       converted.metadata = metadata;
     }
+  }
+
+  // For diem_danh_sessions table
+  if (tableName === "diem_danh_sessions" || tableName === "Điểm_danh_sessions") {
+    const fieldMapping: Record<string, string> = {
+      "Class ID": "class_id",
+      "Mã lớp": "ma_lop",
+      "Tên lớp": "ten_lop",
+      "Môn học": "mon_hoc",
+      "Ngày": "ngay",
+      "Giờ bắt đầu": "gio_bat_dau",
+      "Giờ kết thúc": "gio_ket_thuc",
+      "Giáo viên": "giao_vien",
+      "Teacher ID": "teacher_id",
+      "Điểm danh": "diem_danh",
+      "Trạng thái": "trang_thai",
+      "Timestamp": "timestamp"
+    };
+
+    Object.entries(fieldMapping).forEach(([firebaseField, supabaseField]) => {
+      if (converted[firebaseField] !== undefined) {
+        converted[supabaseField] = converted[firebaseField];
+        delete converted[firebaseField];
+      }
+    });
   }
 
   // For lich_su_sao_thuong table (Stars History)

@@ -20,9 +20,10 @@ interface StudentReportButtonProps {
     type?: 'default' | 'primary' | 'link';
     size?: 'small' | 'middle' | 'large';
     initialMonth?: dayjs.Dayjs | null;
+    iconOnly?: boolean;
 }
 
-const StudentReportButton = ({ student, type = 'default', size = 'middle', initialMonth }: StudentReportButtonProps) => {
+const StudentReportButton = ({ student, type = 'default', size = 'middle', initialMonth, iconOnly = false }: StudentReportButtonProps) => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [sessions, setSessions] = useState<AttendanceSession[]>([]);
     const [loading, setLoading] = useState(false);
@@ -79,7 +80,7 @@ const StudentReportButton = ({ student, type = 'default', size = 'middle', initi
                 onClick={() => setIsModalOpen(true)}
                 loading={loading}
             >
-                Báo cáo
+                {!iconOnly && "Báo cáo"}
             </Button>
 
             <StudentReport

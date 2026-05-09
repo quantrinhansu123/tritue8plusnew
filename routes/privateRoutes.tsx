@@ -18,6 +18,7 @@ import TeacherMonthlyReport from "@/components/pages/TeacherMonthlyReport";
 import AdminMonthlyReportReview from "@/components/pages/AdminMonthlyReportReview";
 import StaffAttendance from "@/components/pages/StaffAttendance";
 import ReportMigrationPage from "@/components/pages/ReportMigrationPage";
+import MakeupManagement from "@/components/pages/MakeupManagement";
 import AdminLayout from "@/layouts/AdminLayout";
 import Authoriation from "@/routes/Authoriation";
 import { Empty } from "antd/lib";
@@ -27,6 +28,14 @@ const privateRoutes = [
     path: "/workspace",
     element: <AdminLayout />,
     children: [
+      {
+        path: "makeup",
+        element: (
+          <Authoriation>
+            <MakeupManagement />
+          </Authoriation>
+        ),
+      },
       {
         index: true,
         element: <Empty />,
@@ -74,6 +83,10 @@ const privateRoutes = [
       {
         path: "attendance/session/:classId",
         element: <AttendanceSession />,
+      },
+      {
+        path: "attendance/old",
+        element: <AttendanceView />,
       },
       {
         path: "attendance/old",

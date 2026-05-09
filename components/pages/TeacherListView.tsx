@@ -3,7 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE, database } from "@/firebase";
 import { ref, onValue, get } from "firebase/database";
-import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat, generateFirebaseId, supabaseSet } from "@/utils/supabaseHelpers";
+import { supabaseGetAll, supabaseOnValue, convertFromSupabaseFormat, generateFirebaseId, supabaseSet, supabaseRemove } from "@/utils/supabaseHelpers";
 import { subjectOptions } from "@/utils/selectOptions";
 import {
   Button,
@@ -1041,21 +1041,16 @@ const TeacherListView: React.FC = () => {
       cancelText: "Huỷ",
       onOk: async () => {
         try {
-          const url = `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn/${teacher.id}.json`;
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 10000);
-          const response = await fetch(url, {
-            method: "DELETE",
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (response.ok) {
+          const success = await supabaseRemove("datasheet/Giáo_viên", teacher.id);
+          if (success) {
             setTeachers(teachers.filter((t) => t.id !== teacher.id));
-            Modal.success({ content: "Xoá giáo viên thành công!" });
+            message.success("Xoá giáo viên thành công!");
+          } else {
+            message.error("Xoá giáo viên thất bại");
           }
         } catch (error) {
           console.error("Error deleting teacher:", error);
-          Modal.error({ content: "Xoá giáo viên thất bại" });
+          message.error("Xoá giáo viên thất bại");
         }
       },
     });

@@ -293,384 +293,144 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     let isSubscribed = true;
-
-    // Mark auth persistence in storage
     saveToStorage(STORAGE_KEYS.AUTH_PERSISTENCE, true);
 
-    // Restore currentUser from userProfile if available (for teacher/parent auth)
     const storedProfile = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
-    if (storedProfile && !currentUser) {
-      // Create minimal user object from profile
-      const restoredUser = {
-        uid: storedProfile.uid,
-        email: storedProfile.email,
-        emailVerified: true,
-        displayName: storedProfile.displayName || undefined,
-      } as User;
-      setCurrentUser(restoredUser);
-    }
+    
+    let unsubscribe = () => {};
+    if (auth) {
+      unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (!isSubscribed) return;
+        console.log('🔐 Auth state changed:', { user: user?.email || 'null', uid: user?.uid || 'null' });
+        setCurrentUser(user);
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!isSubscribed) return;
+        if (user) {
+          console.log("👤 User logged in:", user.email);
+          try {
+            const profile = await fetchUserProfile(user);
+            if (!isSubscribed) return;
 
-      console.log('🔐 Auth state changed:', { user: user?.email || 'null', uid: user?.uid || 'null' });
+            if (!isProfileSame(profile, profileRef.current)) {
+              console.log("🔄 Updating user profile state");
+              setUserProfile(profile);
+              saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
+            }
 
-      setCurrentUser(user);
-      // Don't save User object to localStorage - it's not serializable
-      // saveToStorage(STORAGE_KEYS.CURRENT_USER, user);
-
-      if (user) {
-        console.log("👤 User logged in:", user.email);
-        try {
-          const profile = await fetchUserProfile(user);
-          if (!isSubscribed) return;
-
-          // Only update state if profile has actually changed to prevent re-render loops
-          if (!isProfileSame(profile, profileRef.current)) {
-            console.log("🔄 Updating user profile state (data changed)");
-            setUserProfile(profile);
-            saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
-          } else {
-            console.log("ℹ️ Skipping profile update (data identical)");
-          }
-
-          // Check if teacher needs onboarding
-          if (profile && profile.role === "teacher" && !profile.teacherId) {
-            console.log("🎓 Teacher needs onboarding");
-            setNeedsOnboarding(true);
-            saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, true);
-          } else {
-            setNeedsOnboarding(false);
-            saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
-          }
-        } catch (error) {
-          console.error("❌ Error loading user profile:", error);
-          setUserProfile(null);
-          setNeedsOnboarding(false);
-          saveToStorage(STORAGE_KEYS.USER_PROFILE, null);
-          saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
-        }
-      } else {
-        console.log("👤 User logged out or no Firebase user");
-        // Check if we have a stored profile (for teacher/parent mock auth)
-        const storedProfile = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
-        if (storedProfile) {
-          // If we have a stored profile but no Firebase user, this might be:
-          // 1. Teacher/Parent login (mock user) - keep the profile
-          // 2. Page refresh with teacher/parent login - restore the profile
-          console.log("📦 Restoring stored profile (teacher/parent login):", storedProfile.email);
-          setUserProfile(storedProfile);
-
-          // Restore currentUser from stored profile
-          const restoredUser = {
-            uid: storedProfile.uid,
-            email: storedProfile.email,
-            emailVerified: true,
-            displayName: storedProfile.displayName || undefined,
-          } as User;
-          setCurrentUser(restoredUser);
-
-          // XÁC THỰC LẠI QUYỀN HẠN NGẦM (RE-VALIDATION)
-          // Tránh việc giáo viên bị lưu quyền admin cũ trong localStorage mãi mãi
-          if (storedProfile.role === "admin" || storedProfile.role === "teacher") {
-            console.log("🔄 Background re-validating teacher permissions...");
-            import("@/utils/supabaseHelpers").then(async ({ supabaseGetAll }) => {
-              try {
-                const data = await supabaseGetAll("datasheet/Giáo_viên", true); // force fetch
-                if (data) {
-                  const teacherEntry = Object.entries(data).find(
-                    ([_, t]: [string, any]) => t.Email === storedProfile.email || t["Email công ty"] === storedProfile.email
-                  );
-                  
-                  if (teacherEntry) {
-                    const [_, teacherData] = teacherEntry as [string, any];
-                    const isActuallyAdmin = teacherData.vi_tri === "Admin" || teacherData["Vị trí"] === "Admin" || isAdmin(storedProfile.email);
-                    const correctRole = isActuallyAdmin ? "admin" : "teacher";
-                    
-                    if (storedProfile.isAdmin !== isActuallyAdmin || storedProfile.role !== correctRole) {
-                      console.warn("⚠️ Permission mismatch detected! Auto-fixing profile.");
-                      const updatedProfile = {
-                        ...storedProfile,
-                        isAdmin: isActuallyAdmin,
-                        role: correctRole
-                      };
-                      setUserProfile(updatedProfile);
-                      saveToStorage(STORAGE_KEYS.USER_PROFILE, updatedProfile);
-                    } else {
-                      console.log("✅ Permissions verified and correct.");
-                    }
-                  }
-                }
-              } catch (err) {
-                console.error("❌ Failed to re-validate teacher:", err);
-              }
-            });
-          }
-
-          // Check onboarding status
-          if (storedProfile.role === "teacher" && !storedProfile.teacherId) {
-            setNeedsOnboarding(true);
-          } else {
+            if (profile && profile.role === "teacher" && !profile.teacherId) {
+              setNeedsOnboarding(true);
+              saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, true);
+            } else {
+              setNeedsOnboarding(false);
+              saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
+            }
+          } catch (error) {
+            console.error("❌ Error loading profile:", error);
+            setUserProfile(null);
             setNeedsOnboarding(false);
           }
         } else {
-          // No stored profile and no Firebase user = actual logout
-          console.log("👤 Actual logout - clearing profile");
-          setUserProfile(null);
-          setNeedsOnboarding(false);
-          // Only clear storage if this is an intentional logout, not a page refresh
-          const authPersistence = loadFromStorage<boolean>(STORAGE_KEYS.AUTH_PERSISTENCE);
-          if (!authPersistence) {
-            clearStorage();
+          console.log("👤 User logged out or no Firebase user");
+          const stored = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
+          if (stored) {
+            setUserProfile(stored);
+            setCurrentUser({
+              uid: stored.uid,
+              email: stored.email,
+              emailVerified: true,
+              displayName: stored.displayName || undefined,
+            } as User);
+
+            if (stored.role === "admin" || stored.role === "teacher") {
+              import("@/utils/supabaseHelpers").then(async ({ supabaseGetAll }) => {
+                try {
+                  const data = await supabaseGetAll("datasheet/Giáo_viên", true);
+                  if (data) {
+                    const entry = Object.entries(data).find(([_, t]: [string, any]) => t.Email === stored.email || t["Email công ty"] === stored.email);
+                    if (entry) {
+                      const [_, tData] = entry as [string, any];
+                      const isActuallyAdmin = tData.vi_tri === "Admin" || tData["Vị trí"] === "Admin" || isAdmin(stored.email);
+                      const correctRole = isActuallyAdmin ? "admin" : "teacher";
+                      if (stored.isAdmin !== isActuallyAdmin || stored.role !== correctRole) {
+                        const updated = { ...stored, isAdmin: isActuallyAdmin, role: correctRole };
+                        setUserProfile(updated);
+                        saveToStorage(STORAGE_KEYS.USER_PROFILE, updated);
+                      }
+                    }
+                  }
+                } catch (err) {}
+              });
+            }
+            setNeedsOnboarding(stored.role === "teacher" && !stored.teacherId);
+          } else {
+            setUserProfile(null);
+            setNeedsOnboarding(false);
+            if (!loadFromStorage(STORAGE_KEYS.AUTH_PERSISTENCE)) clearStorage();
           }
         }
-      }
+        if (isSubscribed) setLoading(false);
+      });
+    } else {
+      console.warn("⚠️ Firebase Auth not initialized.");
+      setLoading(false);
+    }
 
-      if (isSubscribed) {
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      isSubscribed = false;
-      unsubscribe();
-    };
+    return () => { isSubscribed = false; unsubscribe(); };
   }, []);
 
   const signUpWithEmail = async (email: string, password: string) => {
+    if (!auth) throw new Error("Hệ thống đăng ký chưa cấu hình.");
     try {
-      console.log("📝 Creating account with email:", email);
-
-      // Create user account
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-
-      // Send email verification
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       await sendEmailVerification(userCredential.user);
-
-      console.log("✅ Account created. Verification email sent to:", email);
-    } catch (error) {
-      console.error("❌ Error creating account:", error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   };
 
   const signInWithEmail = async (email: string, password: string) => {
+    if (!auth) return signInWithTeacherCredentials(email, password);
     try {
-      console.log("� Signing in with email:", email);
-
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-
-      // Check if email is verified
-      if (!userCredential.user.emailVerified) {
-        console.warn("⚠️ Email not verified");
-        // You can choose to allow or block unverified users
-        // For now, we'll allow but show a warning
-      }
-
-      console.log("✅ Sign in successful");
-    } catch (error) {
-      console.error("❌ Error signing in:", error);
-      throw error;
-    }
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      if (!userCredential.user.emailVerified) console.warn("⚠️ Email not verified");
+    } catch (error) { throw error; }
   };
 
-  const signInWithTeacherCredentials = async (
-    email: string,
-    password: string
-  ) => {
+  const signInWithTeacherCredentials = async (email: string, password: string) => {
     try {
-      console.log("🏫 Signing in with teacher credentials (Supabase):", email);
-
-      // Fetch teachers from Supabase instead of Firebase
-      // Use supabaseAdmin to bypass potential RLS issues during migration
-      const { data: teachersData, error: sbError } = await supabaseAdmin
-        .from("giao_vien")
-        .select("*");
-
-      if (sbError) {
-        console.error("❌ Supabase fetch error:", sbError);
-        throw new Error("Failed to fetch teachers from Supabase: " + sbError.message);
-      }
-
-      console.log("📊 Teachers found in DB:", teachersData?.length || 0);
-
-      if (!teachersData || teachersData.length === 0) {
-        throw new Error("No teachers found in database (Table: giao_vien)");
-      }
-
-      // Find teacher by email and password
-      // Note: Supabase columns are usually snake_case or as created. 
-      // Based on the screenshot and common patterns: email, password or "Email", "Password"
-      const teacher = teachersData.find((t: any) => {
-        const teacherEmail = t.email || t.Email || t["Email công ty"] || "";
-        const teacherPassword = t.password || t.Password || "";
-        return (
-          teacherEmail.toLowerCase() === email.toLowerCase() &&
-          teacherPassword === password
-        );
-      });
-
-      if (!teacher) {
-        throw new Error("Invalid email or password");
-      }
-
-      const teacherId = teacher.id;
-      const teacherName = teacher.ten_giao_vien || teacher["Họ và tên"] || teacher.ho_ten || "";
-
-      // Create a mock user object for teacher login
-      const mockUser = {
-        uid: teacherId,
-        email: teacher.email || teacher.Email || teacher["Email công ty"],
-        emailVerified: true,
-        displayName: teacherName,
-      } as User;
-
-      // Create user profile
-      const isActuallyAdmin = teacher.vi_tri === "Admin" || teacher["Vị trí"] === "Admin" || isAdmin(mockUser.email!);
-      
-      const profile: UserProfile = {
-        uid: mockUser.uid,
-        email: mockUser.email!,
-        displayName: teacherName,
-        role: isActuallyAdmin ? "admin" : "teacher",
-        isAdmin: isActuallyAdmin,
-        createdAt: new Date().toISOString(),
-      };
-
-      // Set the current user and profile directly (bypassing Firebase Auth)
+      const { data: teachers, error } = await supabaseAdmin.from("giao_vien").select("*");
+      if (error) throw error;
+      const t = teachers.find((x: any) => (x.email || x.Email || x["Email công ty"] || "").toLowerCase() === email.toLowerCase() && (x.password || x.Password) === password);
+      if (!t) throw new Error("Invalid email or password");
+      const mockUser = { uid: t.id, email: t.email || t.Email, emailVerified: true, displayName: t.ten_giao_vien || t["Họ và tên"] } as User;
+      const isAdm = t.vi_tri === "Admin" || t["Vị trí"] === "Admin" || isAdmin(mockUser.email!);
+      const profile = { uid: mockUser.uid, email: mockUser.email!, displayName: mockUser.displayName!, role: isAdm ? "admin" : "teacher", isAdmin: isAdm, createdAt: new Date().toISOString() };
       setCurrentUser(mockUser);
       setUserProfile(profile);
-      setNeedsOnboarding(false);
-
-      // Save to local storage
       saveToStorage(STORAGE_KEYS.CURRENT_USER, mockUser);
       saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
-      saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
-
-      console.log("✅ Teacher sign in successful:", profile);
-    } catch (error) {
-      console.error("❌ Error signing in with teacher credentials:", error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   };
 
-  const signInWithParentCredentials = async (
-    studentCode: string,
-    password: string
-  ) => {
+  const signInWithParentCredentials = async (studentCode: string, password: string) => {
     try {
-      console.log("👨‍👩‍👧 Signing in with parent credentials:", studentCode);
-
-      // Fetch students from Supabase instead of Firebase
-      const { data: studentsData, error: sbError } = await supabaseAdmin
-        .from("hoc_sinh")
-        .select("*");
-
-      if (sbError) {
-        throw new Error("Failed to fetch students from Supabase: " + sbError.message);
-      }
-
-      if (!studentsData || studentsData.length === 0) {
-        throw new Error("No students found in database");
-      }
-
-      // Find student by student code and password
-      const student = studentsData.find((s: any) => {
-        // Handle both snake_case (Supabase) and PascalCase (Original)
-        const code = (s.ma_hoc_sinh || s["Mã học sinh"] || s.code || "").toString().trim();
-        const pwd = (s.password || s.mat_khau || s["Mật khẩu"] || "").toString().trim();
-        
-        return (
-          code.toLowerCase() === studentCode.trim().toLowerCase() &&
-          pwd === password.trim()
-        );
-      });
-
-      if (!student) {
-        throw new Error("Mã học sinh hoặc mật khẩu không đúng");
-      }
-
-      console.log("🔍 Found student for login:", { 
-        id: student.id, 
-        code: student.ma_hoc_sinh || student["Mã học sinh"] || student.code,
-        hasPassword: !!(student.password || student.mat_khau || student["Mật khẩu"]),
-        rawKeys: Object.keys(student)
-      });
-
-      const studentId = student.id;
-      const studentName = student.ho_va_ten || student["Họ và tên"] || student.name || "";
-      const studentCodeActual = student.ma_hoc_sinh || student["Mã học sinh"] || student.code || "";
-
-      // Check if password is set
-      const studentPassword = student.password || student.mat_khau || student["Mật khẩu"];
-      if (!studentPassword && studentPassword !== 0) {
-        console.warn("⚠️ Student password field is empty in DB:", student);
-        throw new Error("Tài khoản chưa được kích hoạt. Vui lòng liên hệ nhà trường.");
-      }
-
-      // Check if student status is "Hủy" (cancelled)
-      const studentStatus = student.trang_thai || student["Trạng thái"];
-      if (studentStatus === "Hủy") {
-        throw new Error("Tài khoản học sinh đã bị hủy. Vui lòng liên hệ với trung tâm để biết thêm chi tiết.");
-      }
-
-      // Create a mock user object for parent login
-      const mockUser = {
-        uid: `parent_${studentId}`,
-        email: student.email || student["Email"] || `${studentCode}@parent.local`,
-        emailVerified: true,
-        displayName: `Phụ huynh ${studentName}`,
-      } as User;
-
-      // Create user profile for parent
-      const profile: UserProfile = {
-        uid: mockUser.uid,
-        email: mockUser.email!,
-        displayName: mockUser.displayName!,
-        role: "parent" as UserRole,
-        studentId: studentId,
-        studentName: studentName,
-        studentCode: studentCode,
-        isAdmin: false,
-        createdAt: new Date().toISOString(),
-      };
-
-      // Set the current user and profile directly
+      const { data: students, error } = await supabaseAdmin.from("hoc_sinh").select("*");
+      if (error) throw error;
+      const s = students.find((x: any) => (x.ma_hoc_sinh || x["Mã học sinh"] || "").toString().trim() === studentCode.trim() && (x.password || x.mat_khau || x["Mật khẩu"]) === password);
+      if (!s) throw new Error("Invalid student code or password");
+      const mockUser = { uid: s.id, email: `${studentCode}@parent.com`, emailVerified: true, displayName: s.ten_hoc_sinh || s["Họ và tên"] } as User;
+      const profile = { uid: mockUser.uid, email: mockUser.email!, displayName: mockUser.displayName!, role: "parent", isAdmin: false, studentId: s.id, createdAt: new Date().toISOString() };
       setCurrentUser(mockUser);
       setUserProfile(profile);
-      setNeedsOnboarding(false);
-
-      // Save to local storage
       saveToStorage(STORAGE_KEYS.CURRENT_USER, mockUser);
       saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
-      saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
-
-      console.log("✅ Parent sign in successful:", profile);
-    } catch (error) {
-      console.error("❌ Error signing in with parent credentials:", error);
-      throw error;
-    }
+    } catch (error) { throw error; }
   };
-
   const signOut = async () => {
     try {
       console.log("🚪 Signing out");
-
       // Mark as intentional logout before clearing storage
-      // (this is used by the onAuthStateChanged handler)
       localStorage.removeItem(STORAGE_KEYS.AUTH_PERSISTENCE);
 
       // IMPORTANT: if there is an active Firebase session, we must sign out.
-      // Otherwise onAuthStateChanged will immediately restore the user and "logout" will look broken.
-      if (auth.currentUser) {
+      if (auth && auth.currentUser) {
         await firebaseSignOut(auth);
       }
 

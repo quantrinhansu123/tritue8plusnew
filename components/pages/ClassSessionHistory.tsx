@@ -13,7 +13,7 @@ import {
   Popconfirm,
   message,
 } from "antd";
-import { EyeOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, PrinterOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined } from "@ant-design/icons";
+import { EyeOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, PrinterOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined, HistoryOutlined } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
 import { ref, onValue, get, update, remove, set } from "firebase/database";
 import { database } from "../../firebase";
@@ -27,6 +27,23 @@ import {
 } from "@/utils/supabaseHelpers";
 import { AttendanceSession, AttendanceRecord } from "../../types";
 import dayjs from "dayjs";
+
+// Helper to parse attendance data safely
+const parseAttendance = (attendance: any): any[] => {
+  if (!attendance) return [];
+  if (Array.isArray(attendance)) return attendance;
+  if (typeof attendance === 'string') {
+    try {
+      return JSON.parse(attendance);
+    } catch (e) {
+      return [];
+    }
+  }
+  if (typeof attendance === 'object') {
+    return Object.values(attendance);
+  }
+  return [];
+};
 
 
 const ClassSessionHistory = () => {
@@ -84,10 +101,16 @@ const ClassSessionHistory = () => {
           const classSessions = allSessions
             .filter((s) => {
               // Try Class ID first
-              if (s["Class ID"] === classId) return true;
-              // Fallback to Mã lớp if Class ID doesn't match
-              if (classData && s["Mã lớp"] === classData["Mã lớp"]) return true;
-              return false;
+              const isMatch = s["Class ID"] === classId || (classData && s["Mã lớp"] === classData["Mã lớp"]);
+              if (!isMatch) return false;
+
+              // Chỉ hiện các buổi đã HOÀN THÀNH và ngày buổi học phải <= ngày hiện tại
+              // Điều này giúp ẩn các buổi học bù đã lên lịch cho tương lai (đang pending)
+              // Và cũng ẩn các bản ghi lỗi trong tương lai nếu lỡ bị set là completed
+              const isCompleted = s["Trạng thái"] === "completed";
+              const isPastOrToday = dayjs(s["Ngày"]).isBefore(dayjs().add(1, 'day'), 'day');
+
+              return isCompleted && isPastOrToday;
             })
             .sort(
               (a, b) =>
@@ -107,13 +130,17 @@ const ClassSessionHistory = () => {
 
   // Helper function to filter attendance records by enrollment date
   const filterAttendanceByEnrollment = (session: AttendanceSession): AttendanceRecord[] => {
-    if (!classData || !session["Điểm danh"]) return session["Điểm danh"] || [];
+    const rawAttendance = session["Điểm danh"] || (session as any).diem_danh;
+    const attendanceList = parseAttendance(rawAttendance);
+    if (!classData || attendanceList.length === 0) return attendanceList;
     
     const enrollments = classData["Student Enrollments"] || {};
     const sessionDate = session["Ngày"];
     
-    return session["Điểm danh"].filter((record: AttendanceRecord) => {
-      const studentId = record["Student ID"];
+    return attendanceList.filter((record: AttendanceRecord) => {
+      const studentId = record["Student ID"] || (record as any).student_id;
+      if (!studentId) return false;
+
       // Nếu không có enrollment date (backward compatibility), hiển thị học sinh
       if (!enrollments[studentId]) return true;
       
@@ -178,11 +205,59 @@ const ClassSessionHistory = () => {
       };
 
       const cleanedData = cleanData(updateData);
-      const sessionRef = ref(
-        database,
-        `datasheet/Điểm_danh_sessions/${selectedSession.id}`
-      );
-      await update(sessionRef, cleanedData);
+      // Update both field names to be safe
+      await supabaseUpdate("datasheet/Điểm_danh_sessions", selectedSession.id, {
+        ...cleanedData,
+        "Điểm danh": editingRecords,
+        "diem_danh": editingRecords
+      });
+
+      // ✅ Xử lý học bù: Cập nhật trạng thái ở buổi học gốc (Lớp chính)
+      const makeupStudents = editingRecords.filter(r => r["Loại"] === "Học bù" && r["Có mặt"] === true && r["OriginalSessionID"]);
+      if (makeupStudents.length > 0) {
+        console.log(`🔄 [HistoryEdit] Đang xử lý hoàn thành học bù cho ${makeupStudents.length} học sinh...`);
+        for (const studentRecord of makeupStudents) {
+          const originalSessionId = studentRecord["OriginalSessionID"];
+          const studentId = studentRecord["Student ID"];
+          
+          try {
+            const originalSessionData = await supabaseGetById("datasheet/Điểm_danh_sessions", originalSessionId);
+            if (originalSessionData) {
+              const rawOriginalAttendance = originalSessionData["Điểm danh"] || (originalSessionData as any).diem_danh;
+              const originalAttendance = parseAttendance(rawOriginalAttendance);
+              
+              let foundStudent = false;
+              const updatedOriginalAttendance = originalAttendance.map((r: any) => {
+                const rId = r["Student ID"] || r["Mã học sinh"] || (r as any).student_id;
+                if (rId === studentId) {
+                  foundStudent = true;
+                  return { 
+                    ...r, 
+                    "Có mặt": true,
+                    "Vắng có phép": false,
+                    "Đã hoàn thành bù": true,
+                    "Ghi chú": `${r["Ghi chú"] || ""}\n(Đã học bù tại lớp ${selectedSession["Tên lớp"]} ngày ${dayjs(selectedSession["Ngày"]).format("DD/MM/YYYY")})`.trim()
+                  };
+                }
+                return r;
+              });
+
+              if (foundStudent) {
+                await supabaseUpdate("datasheet/Điểm_danh_sessions", originalSessionId, {
+                  "Điểm danh": updatedOriginalAttendance,
+                  "diem_danh": updatedOriginalAttendance
+                });
+                console.log(`✅ [HistoryEdit] Đã đồng bộ trạng thái về buổi học gốc ${originalSessionId}`);
+                message.info(`Đã đồng bộ lại điểm danh bù cho ${studentRecord["Tên học sinh"] || studentId}`);
+              }
+            }
+          } catch (err) {
+            console.error(`❌ [HistoryEdit] Lỗi đồng bộ bù:`, err);
+          }
+        }
+      } else {
+        console.log("ℹ️ [HistoryEdit] Không tìm thấy học sinh học bù có link OriginalSessionID.");
+      }
 
       message.success("Đã cập nhật buổi học");
       setIsEditModalOpen(false);
@@ -599,6 +674,12 @@ const ClassSessionHistory = () => {
       key: "name",
       width: 150,
       fixed: "left" as const,
+      render: (name: string, record: AttendanceRecord) => (
+        <Space>
+          <span style={{ fontWeight: record["Loại"] === "Học bù" ? 600 : 400 }}>{name}</span>
+          {record["Loại"] === "Học bù" && <Tag color="volcano">Học bù</Tag>}
+        </Space>
+      )
     },
     {
       title: "Có mặt",
@@ -841,7 +922,7 @@ const ClassSessionHistory = () => {
     // Generate CSV content
     let csvContent = "\uFEFF"; // UTF-8 BOM for Excel compatibility
     csvContent += `Môn ${subject},,,,,,,\n`;
-    csvContent += "Ngày,Tên HS,Chuyên cần,% BTVN,Tên bài kiểm tra,Điểm,Điểm thưởng,Nhận xét\n";
+    csvContent += "Ngày,Tên HS,Chuyên cần,% BTVN,Tên bài kiểm tra,Điểm kiểm tra,Điểm thưởng,Nhận xét\n";
 
     // Add data rows for each session
     sortedSessions.forEach((session) => {
@@ -918,6 +999,7 @@ const ClassSessionHistory = () => {
           : "Vắng";
         const homeworkPercent = record["% Hoàn thành BTVN"] ?? "-";
         const testName = record["Bài kiểm tra"] || "-";
+        const testScore = record["Điểm kiểm tra"] ?? "-";
         const bonusScore = record["Điểm thưởng"] ?? "-";
         const note = record["Ghi chú"] || "-";
 
@@ -928,6 +1010,7 @@ const ClassSessionHistory = () => {
             <td>${attendance}</td>
             <td>${homeworkPercent}</td>
             <td>${testName}</td>
+            <td>${testScore}</td>
             <td>${bonusScore}</td>
             <td style="text-align: left;">${note}</td>
           </tr>
@@ -1011,6 +1094,7 @@ const ClassSessionHistory = () => {
                 <th>Chuyên cần</th>
                 <th>% BTVN</th>
                 <th>Tên bài kiểm tra</th>
+                <th>Điểm kiểm tra</th>
                 <th>Điểm thưởng</th>
                 <th>Nhận xét</th>
               </tr>
@@ -1141,6 +1225,7 @@ const ClassSessionHistory = () => {
                     <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Chuyên cần</th>
                     <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>% BTVN</th>
                     <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Tên bài kiểm tra</th>
+                    <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm kiểm tra</th>
                     <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm thưởng</th>
                     <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Nhận xét</th>
                   </tr>
@@ -1161,7 +1246,10 @@ const ClassSessionHistory = () => {
                           {dayjs(selectedSession["Ngày"]).format("DD/MM/YYYY")}
                         </td>
                         <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                          {record["Tên học sinh"]}
+                          <Space>
+                            <span style={{ fontWeight: record["Loại"] === "Học bù" ? 600 : 400 }}>{record["Tên học sinh"]}</span>
+                            {record["Loại"] === "Học bù" && <Tag color="volcano" style={{ fontSize: '10px' }}>Học bù</Tag>}
+                          </Space>
                         </td>
                         <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
                           {attendance}
@@ -1173,10 +1261,13 @@ const ClassSessionHistory = () => {
                           {record["Bài kiểm tra"] || "-"}
                         </td>
                         <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                          {record["Điểm kiểm tra"] ?? "-"}
+                        </td>
+                        <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
                           {record["Điểm thưởng"] ?? "-"}
                         </td>
                         <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "left", paddingLeft: "12px" }}>
-                          {record["Ghi chú"] || "-"}
+                          {(record["Ghi chú"] === "Học bù" || !record["Ghi chú"]) ? "-" : record["Ghi chú"]}
                         </td>
                       </tr>
                     );

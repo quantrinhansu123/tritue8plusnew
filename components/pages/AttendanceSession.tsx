@@ -57,8 +57,26 @@ interface TimetableEntry {
   "Thứ": number;
   "Giờ bắt đầu": string;
   "Giờ kết thúc": string;
+  "Giờ kết thúc": string;
   "Phòng học"?: string;
 }
+
+// Helper to parse attendance data safely
+const parseAttendance = (attendance: any): any[] => {
+  if (!attendance) return [];
+  if (Array.isArray(attendance)) return attendance;
+  if (typeof attendance === 'string') {
+    try {
+      return JSON.parse(attendance);
+    } catch (e) {
+      return [];
+    }
+  }
+  if (typeof attendance === 'object') {
+    return Object.values(attendance);
+  }
+  return [];
+};
 
 const AttendanceSessionPage = () => {
   const location = useLocation();
@@ -95,10 +113,10 @@ const AttendanceSessionPage = () => {
   const [editRedeemForm] = Form.useForm();
   const [customSchedule, setCustomSchedule] = useState<TimetableEntry | null>(null);
   const [isEditingMode, setIsEditingMode] = useState(false); // Chế độ sửa điểm danh sau khi hoàn thành
-  
+
   // State lưu báo cáo tháng đã submitted/approved của các học sinh trong session này
   const [monthlyReportsForSession, setMonthlyReportsForSession] = useState<any[]>([]);
-  
+
   // Bug 8: State cho tài liệu đính kèm bài tập
   const [homeworkAttachments, setHomeworkAttachments] = useState<Array<{
     name: string;
@@ -107,7 +125,7 @@ const AttendanceSessionPage = () => {
     uploadedAt: string;
   }>>([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
-  
+
   // State cho nội dung buổi học
   const [lessonContent, setLessonContent] = useState<string>("");
   // State cho tài liệu đính kèm nội dung buổi học
@@ -118,7 +136,7 @@ const AttendanceSessionPage = () => {
     uploadedAt: string;
   }>>([]);
   const [uploadingLessonAttachment, setUploadingLessonAttachment] = useState(false);
-  
+
   // Bug 9: State cho bài tập buổi trước
   const [previousHomework, setPreviousHomework] = useState<{
     description: string;
@@ -126,7 +144,7 @@ const AttendanceSessionPage = () => {
     attachments?: any[];
     date: string;
   } | null>(null);
-  
+
   // Bug 13: State cho editing check-in/out time
   const [editingCheckTime, setEditingCheckTime] = useState<{
     studentId: string;
@@ -150,22 +168,22 @@ const AttendanceSessionPage = () => {
     existingInvoices: Record<string, any>
   ): number => {
     let totalDebt = 0;
-    
+
     Object.entries(existingInvoices).forEach(([key, invoice]) => {
       if (!invoice || typeof invoice !== "object") return;
-      
+
       // Only consider invoices for the current student
       if (invoice.studentId !== studentId) return;
-      
+
       const invoiceMonth = invoice.month ?? null;
       const invoiceYear = invoice.year ?? null;
       if (invoiceMonth === null || invoiceYear === null) return;
-      
+
       // Only consider months strictly before the current month/year
       // currentMonth is 0-indexed (0=Jan, 11=Dec)
-      const isBeforeCurrentMonth = invoiceYear < currentYear || 
+      const isBeforeCurrentMonth = invoiceYear < currentYear ||
         (invoiceYear === currentYear && invoiceMonth < currentMonth);
-      
+
       if (isBeforeCurrentMonth) {
         const status = invoice.status || "unpaid";
         // Only count unpaid invoices
@@ -175,7 +193,7 @@ const AttendanceSessionPage = () => {
         }
       }
     });
-    
+
     return totalDebt;
   };
 
@@ -199,15 +217,15 @@ const AttendanceSessionPage = () => {
 
       const studentsList = studentsData && typeof studentsData === 'object'
         ? Object.entries(studentsData).map(([id, value]: [string, any]) => {
-            const converted = convertFromSupabaseFormat(value, "hoc_sinh");
-            return { id, ...converted };
-          })
+          const converted = convertFromSupabaseFormat(value, "hoc_sinh");
+          return { id, ...converted };
+        })
         : [];
       const classesList = classesData && typeof classesData === 'object'
         ? Object.entries(classesData).map(([id, value]: [string, any]) => {
-            const converted = convertFromSupabaseFormat(value, "lop_hoc");
-            return { id, ...converted };
-          })
+          const converted = convertFromSupabaseFormat(value, "lop_hoc");
+          return { id, ...converted };
+        })
         : [];
       const coursesList = coursesData
         ? Object.entries(coursesData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
@@ -293,7 +311,7 @@ const AttendanceSessionPage = () => {
         const existing = existingInvoices[key];
         const existingStatus = typeof existing === "object" && existing !== null ? existing.status : existing;
         const isPaid = existingStatus === "paid";
-        
+
         const sessionInfo = {
           Ngày: sessionDate,
           "Tên lớp": classInfo?.["Tên lớp"] || "",
@@ -309,14 +327,14 @@ const AttendanceSessionPage = () => {
             const sessionExistsInPaidInvoice = existingSessions.some(
               (s: any) => s["Ngày"] === sessionDate
             );
-            
+
             if (isPaid) {
               // Invoice đã paid - chỉ tạo invoice bổ sung nếu buổi này chưa được tính
               if (!sessionExistsInPaidInvoice) {
                 // Tạo invoice bổ sung với key mới: thêm "-extra" hoặc tìm invoice unpaid cho buổi mới
                 const extraKey = `${studentId}-${currentClassId}-${targetMonth + 1}-${targetYear}-extra`;
                 const existingExtra = existingInvoices[extraKey];
-                
+
                 if (existingExtra && typeof existingExtra === "object" && existingExtra.status !== "paid") {
                   // Đã có invoice bổ sung, thêm buổi vào
                   const extraSessions = Array.isArray(existingExtra.sessions) ? existingExtra.sessions : [];
@@ -346,7 +364,7 @@ const AttendanceSessionPage = () => {
                       parentInvoiceId: key,
                       debt: existingExtra.debt || 0,
                     };
-                    upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
+                    upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => { }));
                   }
                 } else if (!existingExtra) {
                   // Tạo invoice bổ sung mới
@@ -357,7 +375,7 @@ const AttendanceSessionPage = () => {
                     targetYear,
                     existingInvoices
                   );
-                  
+
                   // Lấy giá từ hoc_phi_rieng ngay từ đầu
                   const pricePerSessionForStudent = getPricePerSession(studentId, currentClassId);
                   const newExtraInvoice = {
@@ -382,18 +400,18 @@ const AttendanceSessionPage = () => {
                     parentInvoiceId: key, // Liên kết với invoice gốc đã paid
                     debt: debt, // Lưu công nợ từ các tháng trước
                   };
-                  upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: extraKey, ...newExtraInvoice }).then(() => {}));
+                  upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: extraKey, ...newExtraInvoice }).then(() => { }));
                 }
               }
               // Không sửa invoice đã paid
               return;
             }
-            
+
             // Invoice chưa paid - thêm buổi bình thường
             const sessionExists = existingSessions.some(
               (s: any) => s["Ngày"] === sessionDate
             );
-            
+
             if (!sessionExists) {
               // Lấy giá từ hoc_phi_rieng hoặc giữ nguyên giá cũ nếu có
               const currentPrice = existing.pricePerSession || getPricePerSession(studentId, currentClassId);
@@ -418,7 +436,7 @@ const AttendanceSessionPage = () => {
                 sessions: [...existingSessions, sessionInfo], // Thêm session mới vào JSONB array
                 debt: existing.debt || 0,
               };
-              upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
+              upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => { }));
             }
           } else {
             // Create new invoice
@@ -429,7 +447,7 @@ const AttendanceSessionPage = () => {
               targetYear,
               existingInvoices
             );
-            
+
             // Lấy giá từ hoc_phi_rieng ngay từ đầu
             const pricePerSessionForStudent = getPricePerSession(studentId, currentClassId);
             const newInvoice = {
@@ -452,24 +470,24 @@ const AttendanceSessionPage = () => {
               sessions: [sessionInfo],
               debt: debt, // Lưu công nợ từ các tháng trước
             };
-            upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: key, ...newInvoice }).then(() => {}));
+            upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", { id: key, ...newInvoice }).then(() => { }));
           }
         } else {
           // Học sinh vắng không phép → xóa session này khỏi invoice nếu có
           // Không xử lý invoice đã paid
           if (isPaid) return;
-          
+
           if (existing && typeof existing === "object") {
             const existingSessions = Array.isArray(existing.sessions) ? existing.sessions : [];
             const filteredSessions = existingSessions.filter(
               (s: any) => s["Ngày"] !== sessionDate
             );
-            
+
             if (filteredSessions.length !== existingSessions.length) {
               // Session đã bị xóa
               if (filteredSessions.length === 0) {
                 // Xóa invoice hoàn toàn nếu không còn session nào
-                upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key).then(() => {}));
+                upsertPromises.push(supabaseRemove("datasheet/Phiếu_thu_học_phí_chi_tiết", key).then(() => { }));
               } else {
                 // Lấy giá từ hoc_phi_rieng hoặc giữ nguyên giá cũ nếu có
                 const currentPrice = existing.pricePerSession || getPricePerSession(studentId, currentClassId);
@@ -495,7 +513,7 @@ const AttendanceSessionPage = () => {
                   sessions: filteredSessions, // Cập nhật sessions array (đã xóa session)
                   debt: existing.debt || 0,
                 };
-                upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => {}));
+                upsertPromises.push(supabaseSet("datasheet/Phiếu_thu_học_phí_chi_tiết", updatedInvoice).then(() => { }));
               }
             }
           }
@@ -510,7 +528,7 @@ const AttendanceSessionPage = () => {
         studentsProcessed: currentAttendanceRecords.filter(r => r["Có mặt"] === true).length,
         invoicesCreatedOrUpdated: upsertPromises.length,
       });
-      
+
       // Auto-update prices from hoc_phi_rieng after syncing invoices
       await updateInvoicePricesFromHocPhiRieng(targetMonth + 1, targetYear);
     } catch (error) {
@@ -522,10 +540,10 @@ const AttendanceSessionPage = () => {
   const updateInvoicePricesFromHocPhiRieng = async (targetMonth: number, targetYear: number) => {
     try {
       console.log("[UpdatePrice] Starting to update prices from hoc_phi_rieng", { targetMonth, targetYear });
-      
+
       // Step 1: Load hoc_phi_rieng từ bảng lop_hoc_hoc_sinh
       const tuitionData = await supabaseGetAll("datasheet/Lớp_học/Học_sinh");
-      
+
       // Tạo map để lookup nhanh: key = "student_id-class_id", value = hoc_phi_rieng
       const hocPhiRiengMap = new Map<string, number>();
       if (tuitionData && typeof tuitionData === "object") {
@@ -543,59 +561,59 @@ const AttendanceSessionPage = () => {
           }
         });
       }
-      
+
       // Step 2: Load tất cả invoice details của tháng này
       const allInvoiceDetails = await supabaseGetAll("datasheet/Phiếu_thu_học_phí_chi_tiết") || {};
-      
+
       const updatePromises: Promise<void>[] = [];
       let updatedCount = 0;
       let checkedCount = 0;
-      
+
       // Step 3: Cập nhật price_per_session trong phieu_thu_hoc_phi_chi_tiet từ hoc_phi_rieng
       Object.entries(allInvoiceDetails).forEach(([detailId, detailData]: [string, any]) => {
         if (!detailData || typeof detailData !== "object") return;
-        
+
         // Chỉ xử lý invoices của tháng/năm này
         const invoiceMonth = detailData.month ?? 0;
         const invoiceYear = detailData.year ?? 0;
-        
+
         if (invoiceMonth !== targetMonth || invoiceYear !== targetYear) {
           return;
         }
-        
+
         checkedCount++;
-        
+
         // Lấy student_id và class_id từ detailData
         const studentId = detailData.studentId || detailData.student_id || "";
         const classId = detailData.classId || detailData.class_id || "";
-        
+
         if (!studentId || !classId) {
           return;
         }
-        
+
         // Tìm hoc_phi_rieng từ map
         const mapKey = `${studentId}-${classId}`;
         const hocPhiRieng = hocPhiRiengMap.get(mapKey);
-        
+
         if (hocPhiRieng === undefined || hocPhiRieng === null) {
           // Không có hoc_phi_rieng, giữ nguyên giá hiện tại
           return;
         }
-        
+
         // Lấy số buổi và discount từ detailData
         const totalSessions = detailData.totalSessions || detailData.total_sessions || 0;
         const discount = detailData.discount || 0;
-        
+
         // Tính lại totalAmount và finalAmount
         const newTotalAmount = totalSessions * hocPhiRieng;
         const newFinalAmount = Math.max(0, newTotalAmount - discount);
-        
+
         // Chỉ cập nhật nếu giá thay đổi
         const currentPricePerSession = detailData.pricePerSession || detailData.price_per_session || 0;
         if (currentPricePerSession === hocPhiRieng) {
           return; // Giá không đổi, không cần update
         }
-        
+
         // Cập nhật price_per_session trong phieu_thu_hoc_phi_chi_tiet
         updatePromises.push(
           supabaseUpdate("datasheet/Phiếu_thu_học_phí_chi_tiết", detailId, {
@@ -610,7 +628,7 @@ const AttendanceSessionPage = () => {
           })
         );
       });
-      
+
       await Promise.all(updatePromises);
       console.log(`[UpdatePrice] ✅ Updated ${updatedCount}/${checkedCount} invoice details for month ${targetMonth}/${targetYear}`);
     } catch (error) {
@@ -631,7 +649,7 @@ const AttendanceSessionPage = () => {
 
     try {
       const monthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
-      
+
       // Get all monthly reports for this month
       const reportsSnapshot = await new Promise<any>((resolve) => {
         const reportsRef = "datasheet/Nhận_xét_tháng";
@@ -654,9 +672,9 @@ const AttendanceSessionPage = () => {
       // Filter sessions for this month and class
       const monthSessions = allSessions.filter((s: any) => {
         const sessionDate = dayjs(s["Ngày"]);
-        return sessionDate.month() === targetMonth && 
-               sessionDate.year() === targetYear &&
-               s["Class ID"] === classId;
+        return sessionDate.month() === targetMonth &&
+          sessionDate.year() === targetYear &&
+          s["Class ID"] === classId;
       });
 
       const updatePromises: Promise<void>[] = [];
@@ -718,7 +736,7 @@ const AttendanceSessionPage = () => {
         updatePromises.push(supabaseUpdate("datasheet/Nhận_xét_tháng", reportId, {
           stats: updatedStats,
           updatedAt: new Date().toISOString(),
-        }).then(() => {}));
+        }).then(() => { }));
       });
 
       await Promise.all(updatePromises);
@@ -740,7 +758,7 @@ const AttendanceSessionPage = () => {
     const timetableRef = "datasheet/Thời_khoá_biểu";
     const unsubscribe = supabaseOnValue(timetableRef, (data) => {
       if (data) {
-        const entry = Object.entries(data).find(([, value]: [string, any]) => 
+        const entry = Object.entries(data).find(([, value]: [string, any]) =>
           value["Class ID"] === classData.id && value["Ngày"] === sessionDate
         );
         if (entry) {
@@ -759,18 +777,18 @@ const AttendanceSessionPage = () => {
 
     const sessionMonth = dayjs(sessionDate).format("YYYY-MM");
     const reportsRef = "datasheet/Nhận_xét_tháng";
-    
+
     const unsubscribe = supabaseOnValue(reportsRef, (data) => {
       if (data) {
         // Lọc các báo cáo của tháng này, cho lớp này, có status submitted hoặc approved
         const relevantReports = Object.entries(data)
           .filter(([, report]: [string, any]) => {
             return report.month === sessionMonth &&
-                   report.classIds?.includes(classData.id) &&
-                   (report.status === "submitted" || report.status === "approved");
+              report.classIds?.includes(classData.id) &&
+              (report.status === "submitted" || report.status === "approved");
           })
           .map(([id, report]: [string, any]) => ({ id, ...report }));
-        
+
         setMonthlyReportsForSession(relevantReports);
       } else {
         setMonthlyReportsForSession([]);
@@ -793,7 +811,7 @@ const AttendanceSessionPage = () => {
       try {
         const sessionsRef = "datasheet/Điểm_danh_sessions";
         const data = await supabaseGetAll(sessionsRef);
-        
+
         if (data) {
           const sessions = Object.entries(data).map(([id, value]: [string, any]) => {
             const converted = convertFromSupabaseFormat(value, "diem_danh_sessions");
@@ -807,8 +825,7 @@ const AttendanceSessionPage = () => {
           const existing = sessions.find(
             (s) =>
               s["Class ID"] === classData.id &&
-              s["Ngày"] === sessionDate &&
-              s["Trạng thái"] === "completed"
+              s["Ngày"] === sessionDate
           );
 
           if (existing) {
@@ -817,19 +834,21 @@ const AttendanceSessionPage = () => {
             if (!existingSession || existingSession.id !== existing.id) {
               setExistingSession(existing);
               setSessionId(existing.id);
-              
+
               // Filter attendance records theo enrollment date - chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
               const enrollments = classData["Student Enrollments"] || {};
-              const filteredAttendanceRecords = (existing["Điểm danh"] || []).filter((record: AttendanceRecord) => {
-                const studentId = record["Student ID"];
+              const rawAttendance = existing["Điểm danh"] || (existing as any).diem_danh;
+              const attendanceList = parseAttendance(rawAttendance);
+              const filteredAttendanceRecords = attendanceList.filter((record: AttendanceRecord) => {
+                const studentId = record["Student ID"] || (record as any).student_id;
                 // Nếu không có enrollment date (backward compatibility), hiển thị học sinh
                 if (!enrollments[studentId]) return true;
-                
+
                 // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session (đăng ký ngày 27 thì điểm danh được ngày 27)
                 const enrollmentDate = enrollments[studentId].enrollmentDate;
                 return enrollmentDate <= sessionDate;
               });
-              
+
               setAttendanceRecords(filteredAttendanceRecords);
               setLessonContent(existing["Nội dung buổi học"] || "");
               // Load tài liệu đính kèm nội dung buổi học
@@ -838,7 +857,11 @@ const AttendanceSessionPage = () => {
               setTotalExercises(existing["Bài tập"]?.["Tổng số bài"] || 0);
               // Bug 8: Load tài liệu đính kèm từ session hiện tại
               setHomeworkAttachments(existing["Bài tập"]?.["Tài liệu đính kèm"] || []);
-              setCurrentStep(1); // Go to step 2 to view/edit
+              if (existing["Trạng thái"] === "completed") {
+                setCurrentStep(1); // Go to step 2 to view/edit
+              } else {
+                setCurrentStep(0); // Stay at step 1 to take attendance
+              }
             }
           }
         }
@@ -855,12 +878,12 @@ const AttendanceSessionPage = () => {
   // Load students - tách riêng để có thể dùng existingSession state
   useEffect(() => {
     if (!classData) return;
-    
+
     const loadStudents = async () => {
       try {
         const studentsRef = "datasheet/Học_sinh";
         const data = await supabaseGetAll(studentsRef);
-        
+
         if (data) {
           const allStudents = Object.entries(data).map(([id, value]: [string, any]) => {
             const converted = convertFromSupabaseFormat(value, "hoc_sinh");
@@ -870,24 +893,59 @@ const AttendanceSessionPage = () => {
             };
           });
 
+          console.log("[AttendanceSession] Loading students for class:", classData.id, {
+            sessionDate,
+            enrollmentCount: classData["Student IDs"]?.length || 0,
+            hasExistingSession: !!existingSession,
+            totalStudentsFromDB: allStudents.length
+          });
+
           // Filter students by enrollment date
           const enrollments = classData["Student Enrollments"] || {};
+          const studentIdsInClass = Array.isArray(classData["Student IDs"]) ? classData["Student IDs"] : [];
+          
           const classStudents = allStudents
             .filter((s) => {
-              if (!classData["Student IDs"]?.includes(s.id)) return false;
+              const studentIdFromDb = s.id;
+              const studentCodeFromDb = s["Mã học sinh"];
               
-              // Nếu đang xem/sửa session cũ (existingSession exists), hiển thị TẤT CẢ học sinh hiện tại của lớp
-              // để có thể thêm học sinh mới vào điểm danh
+              // Check if student is in class by ID or Code
+              const isEnrolled = studentIdsInClass.includes(studentIdFromDb) || 
+                                (studentCodeFromDb && studentIdsInClass.includes(studentCodeFromDb));
+              
+              const rawExistingAttendance = existingSession ? (existingSession["Điểm danh"] || (existingSession as any).diem_danh) : null;
+              const existingAttendanceList = parseAttendance(rawExistingAttendance);
+              const isMakeupStudent = existingAttendanceList.some((r: any) => {
+                const rId = r["Student ID"] || r["Mã học sinh"] || (r as any).student_id;
+                return rId === studentIdFromDb || (studentCodeFromDb && rId === studentCodeFromDb);
+              });
+
+              if (!isEnrolled && !isMakeupStudent) return false;
+
+              // Nếu đang xem/sửa session cũ, hiển thị TẤT CẢ học sinh đã từng có trong session hoặc đang có trong lớp
               if (existingSession) return true;
+
+              // Nếu tạo mới session, kiểm tra enrollment date
+              // Check both ID and Code in enrollments map
+              const enrollmentInfo = enrollments[studentIdFromDb] || (studentCodeFromDb ? enrollments[studentCodeFromDb] : null);
               
-              // Nếu tạo mới session, chỉ hiển thị học sinh đã đăng ký trước hoặc trong ngày session
-              if (!enrollments[s.id]) return true;
+              if (!enrollmentInfo || !enrollmentInfo.enrollmentDate) {
+                // Nếu không có thông tin đăng ký, mặc định cho phép hiển thị để tránh lỗi mất học sinh
+                return true;
+              }
+
+              const enrollmentDate = enrollmentInfo.enrollmentDate;
+              const isEligible = enrollmentDate <= sessionDate;
               
-              const enrollmentDate = enrollments[s.id].enrollmentDate;
-              return enrollmentDate <= sessionDate;
+              if (!isEligible) {
+                console.log(`[AttendanceSession] Student ${s["Họ và tên"]} (${studentIdFromDb}) filtered out. Enrollment: ${enrollmentDate}, Session: ${sessionDate}`);
+              }
+              
+              return isEligible;
             })
             .map((s) => ({
               ...s,
+              id: s.id || s["Mã học sinh"], // Ensure id is set correctly
               "SĐT phụ huynh":
                 s["SĐT phụ huynh"] ||
                 s["Số điện thoại phụ huynh"] ||
@@ -897,6 +955,7 @@ const AttendanceSessionPage = () => {
                 "",
             }));
 
+          console.log("[AttendanceSession] Final students list:", classStudents.length, classStudents.map(s => s["Họ và tên"]));
           setStudents(classStudents);
         }
       } catch (error) {
@@ -915,7 +974,7 @@ const AttendanceSessionPage = () => {
       try {
         const sessionsRef = "datasheet/Điểm_danh_sessions";
         const data = await supabaseGetAll(sessionsRef);
-        
+
         if (data) {
           // Lấy tất cả sessions của lớp này
           const classSessions = Object.entries(data)
@@ -926,8 +985,8 @@ const AttendanceSessionPage = () => {
                 ...converted,
               };
             })
-            .filter((s) => 
-              s["Class ID"] === classData.id && 
+            .filter((s) =>
+              s["Class ID"] === classData.id &&
               s["Trạng thái"] === "completed" &&
               s["Ngày"] < sessionDate // Chỉ lấy buổi trước
             )
@@ -963,7 +1022,7 @@ const AttendanceSessionPage = () => {
     try {
       const folderPath = generateFolderPath(classData?.id || "unknown");
       const result = await uploadToCloudinary(file, folderPath);
-      
+
       if (result.success && result.url) {
         const newAttachment = {
           name: file.name,
@@ -995,7 +1054,7 @@ const AttendanceSessionPage = () => {
     try {
       const folderPath = generateFolderPath(classData?.id || "unknown");
       const result = await uploadToCloudinary(file, folderPath);
-      
+
       if (result.success && result.url) {
         const newAttachment = {
           name: file.name,
@@ -1038,7 +1097,7 @@ const AttendanceSessionPage = () => {
   // Handle confirm time selection
   const handleConfirmTime = () => {
     if (!selectedTimeData) return;
-    
+
     const newTime = tempTime ? tempTime.format("HH:mm:ss") : "";
     handleUpdateCheckTime(selectedTimeData.studentId, selectedTimeData.field, newTime);
     handleCloseTimeModal();
@@ -1046,8 +1105,8 @@ const AttendanceSessionPage = () => {
 
   // Bug 13: Handle update check time
   const handleUpdateCheckTime = async (
-    studentId: string, 
-    field: "Giờ check-in" | "Giờ check-out", 
+    studentId: string,
+    field: "Giờ check-in" | "Giờ check-out",
     newTime: string
   ) => {
     const updatedRecords = attendanceRecords.map((record) => {
@@ -1056,10 +1115,10 @@ const AttendanceSessionPage = () => {
       }
       return record;
     });
-    
+
     setAttendanceRecords(updatedRecords);
     setEditingCheckTime(null);
-    
+
     // Lưu ngay vào Firebase nếu đã có session
     if (sessionId) {
       try {
@@ -1094,10 +1153,10 @@ const AttendanceSessionPage = () => {
       setAttendanceRecords(prev => {
         // Nếu chưa có records, không làm gì (sẽ được khởi tạo từ existingSession)
         if (prev.length === 0) return prev;
-        
+
         const existingStudentIds = new Set(prev.map(r => r["Student ID"]));
         const newStudents = students.filter(s => !existingStudentIds.has(s.id));
-        
+
         if (newStudents.length > 0) {
           console.log(`🆕 Adding ${newStudents.length} new students to attendance:`, newStudents.map(s => s["Họ và tên"]));
           const newRecords = newStudents.map((s) => ({
@@ -1106,10 +1165,10 @@ const AttendanceSessionPage = () => {
             "Có mặt": false,
             "Ghi chú": "",
           }));
-          
+
           return [...prev, ...newRecords];
         }
-        
+
         return prev;
       });
     }
@@ -1130,14 +1189,14 @@ const AttendanceSessionPage = () => {
     setAttendanceRecords((prev) =>
       prev.map((record) =>
         record["Student ID"] === studentId
-          ? { 
-              ...record, 
-              "Có mặt": present,
-              // Tự động ghi giờ check-in khi tick "Có mặt"
-              "Giờ check-in": present && !record["Giờ check-in"] 
-                ? dayjs().format("HH:mm:ss") 
-                : record["Giờ check-in"]
-            }
+          ? {
+            ...record,
+            "Có mặt": present,
+            // Tự động ghi giờ check-in khi tick "Có mặt"
+            "Giờ check-in": present && !record["Giờ check-in"]
+              ? dayjs().format("HH:mm:ss")
+              : record["Giờ check-in"]
+          }
           : record
       )
     );
@@ -1150,8 +1209,8 @@ const AttendanceSessionPage = () => {
         ...record,
         "Có mặt": present,
         // Tự động ghi giờ check-in khi chọn tất cả "Có mặt"
-        "Giờ check-in": present && !record["Giờ check-in"] 
-          ? currentTime 
+        "Giờ check-in": present && !record["Giờ check-in"]
+          ? currentTime
           : record["Giờ check-in"]
       }))
     );
@@ -1219,7 +1278,7 @@ const AttendanceSessionPage = () => {
   // Handle check-out - ghi giờ check-out
   const handleCheckOut = async (studentId: string) => {
     const checkOutTime = dayjs().format("HH:mm:ss");
-    
+
     setAttendanceRecords((prev) =>
       prev.map((record) =>
         record["Student ID"] === studentId
@@ -1271,9 +1330,9 @@ const AttendanceSessionPage = () => {
       }
       return record;
     });
-    
+
     setAttendanceRecords(updatedRecords);
-    
+
     // Auto-save to Firebase if session already exists
     if (sessionId && existingSession) {
       try {
@@ -1285,6 +1344,57 @@ const AttendanceSessionPage = () => {
         console.error("Error updating exercises:", error);
         message.error("Lỗi khi cập nhật bài tập");
       }
+    }
+  };
+
+  const handleRemoveMakeupStudent = async (studentId: string) => {
+    try {
+      const attendanceRecord = attendanceRecords.find(r => r["Student ID"] === studentId);
+      if (!attendanceRecord || attendanceRecord["Loại"] !== "Học bù") return;
+
+      const originalSessionId = attendanceRecord["OriginalSessionID"];
+      
+      // 1. Remove from local state
+      const updatedLocalRecords = attendanceRecords.filter(r => r["Student ID"] !== studentId);
+      setAttendanceRecords(updatedLocalRecords);
+
+      // 2. Update current session in DB
+      if (sessionId && existingSession) {
+        await supabaseUpdate("datasheet/Điểm_danh_sessions", sessionId, {
+          "Điểm danh": updatedLocalRecords
+        });
+      }
+
+      // 3. Reset original session flag in DB
+      if (originalSessionId) {
+        try {
+          const originalSessionData = await supabaseGetById("datasheet/Điểm_danh_sessions", originalSessionId);
+          if (originalSessionData) {
+            const originalAttendance = Array.isArray(originalSessionData["Điểm danh"]) 
+              ? originalSessionData["Điểm danh"] 
+              : Object.values(originalSessionData["Điểm danh"] || {});
+              
+            const updatedOriginalAttendance = originalAttendance.map((r: any) => {
+              const rId = r["Student ID"] || r["Mã học sinh"];
+              if (rId === studentId) {
+                const { "Đã xếp lịch bù": _, ...rest } = r;
+                return rest;
+              }
+              return r;
+            });
+            await supabaseUpdate("datasheet/Điểm_danh_sessions", originalSessionId, {
+              "Điểm danh": updatedOriginalAttendance
+            });
+          }
+        } catch (err) {
+          console.error("Error resetting original session makeup flag:", err);
+        }
+      }
+
+      message.success("Đã xóa học sinh học bù và khôi phục trạng thái vắng ở lớp gốc.");
+    } catch (error) {
+      console.error("Error removing makeup student:", error);
+      message.error("Lỗi khi xóa học sinh học bù");
     }
   };
 
@@ -1329,7 +1439,7 @@ const AttendanceSessionPage = () => {
   // Handle test score change - auto-save to Firebase if session exists
   const handleTestScoreChange = async (studentId: string, score: number | null) => {
     console.log("🔄 handleTestScoreChange called:", { studentId, score, sessionId, hasExistingSession: !!existingSession });
-    
+
     // Update local state first
     const updatedRecords = attendanceRecords.map((record) => {
       if (record["Student ID"] === studentId) {
@@ -1343,9 +1453,9 @@ const AttendanceSessionPage = () => {
       }
       return record;
     });
-    
+
     setAttendanceRecords(updatedRecords);
-    
+
     // Auto-save to Firebase if session already exists
     if (sessionId && existingSession) {
       try {
@@ -1379,9 +1489,9 @@ const AttendanceSessionPage = () => {
       }
       return record;
     });
-    
+
     setAttendanceRecords(updatedRecords);
-    
+
     // Auto-save to Firebase if session already exists
     if (sessionId && existingSession) {
       try {
@@ -1553,7 +1663,7 @@ const AttendanceSessionPage = () => {
 
       // ✅ FIX: Tính điểm thưởng còn lại
       const currentTotalBonus = calculatedTotalBonus - totalRedeemed;
-      
+
       if (pointsToRedeem > currentTotalBonus) {
         message.error(`Không đủ điểm thưởng. Hiện có: ${currentTotalBonus.toFixed(1)} điểm (Tích lũy: ${calculatedTotalBonus.toFixed(1)}, Đã đổi: ${totalRedeemed.toFixed(1)})`);
         return;
@@ -1628,7 +1738,7 @@ const AttendanceSessionPage = () => {
       });
 
       const currentTotalBonus = Number(studentSnapshot?.["Tổng điểm thưởng"] || 0);
-      
+
       // Calculate the difference
       // Current total = old total after redeem
       // If we change from 10 to 15: need to subtract 5 more (current - 5)
@@ -1760,7 +1870,7 @@ const AttendanceSessionPage = () => {
           "Old Trạng thái": existingSession["Trạng thái"],
           "New Trạng thái": "completed"
         });
-        
+
         const updateData = {
           "Trạng thái": "completed",
           "Điểm danh": attendanceRecords,
@@ -1771,12 +1881,12 @@ const AttendanceSessionPage = () => {
           "Bài tập":
             homeworkDescription || totalExercises || homeworkAttachments.length > 0
               ? {
-                  "Mô tả": homeworkDescription,
-                  "Tổng số bài": totalExercises,
-                  "Người giao": completionPerson,
-                  "Thời gian giao": completionTime,
-                  "Tài liệu đính kèm": homeworkAttachments.length > 0 ? homeworkAttachments : undefined,
-                }
+                "Mô tả": homeworkDescription,
+                "Tổng số bài": totalExercises,
+                "Người giao": completionPerson,
+                "Thời gian giao": completionTime,
+                "Tài liệu đính kèm": homeworkAttachments.length > 0 ? homeworkAttachments : undefined,
+              }
               : undefined,
         };
 
@@ -1797,7 +1907,7 @@ const AttendanceSessionPage = () => {
           userProfile?.displayName ||
           userProfile?.email ||
           "";
-        
+
         console.log("✅ Creating new attendance session:", {
           "Class ID": classData.id,
           "Tên lớp": classData["Tên lớp"],
@@ -1807,7 +1917,7 @@ const AttendanceSessionPage = () => {
           "Trạng thái": "completed",
           "👤 Person completing": userProfile?.displayName || userProfile?.email,
         });
-        
+
         const sessionData: Omit<AttendanceSession, "id"> = {
           "Mã lớp": classData["Mã lớp"],
           "Tên lớp": classData["Tên lớp"],
@@ -1828,12 +1938,12 @@ const AttendanceSessionPage = () => {
           "Bài tập":
             homeworkDescription || totalExercises || homeworkAttachments.length > 0
               ? {
-                  "Mô tả": homeworkDescription,
-                  "Tổng số bài": totalExercises,
-                  "Người giao": completionPerson,
-                  "Thời gian giao": completionTime,
-                  "Tài liệu đính kèm": homeworkAttachments.length > 0 ? homeworkAttachments : undefined,
-                }
+                "Mô tả": homeworkDescription,
+                "Tổng số bài": totalExercises,
+                "Người giao": completionPerson,
+                "Thời gian giao": completionTime,
+                "Tài liệu đính kèm": homeworkAttachments.length > 0 ? homeworkAttachments : undefined,
+              }
               : undefined,
           Timestamp: completionTime,
         };
@@ -1856,7 +1966,7 @@ const AttendanceSessionPage = () => {
           classData.id,
           attendanceRecords
         );
-        
+
         // Sync monthly reports for affected students
         const affectedStudentIds = attendanceRecords.map(r => r["Student ID"]).filter(Boolean) as string[];
         await syncMonthlyReportsForSession(
@@ -1866,6 +1976,57 @@ const AttendanceSessionPage = () => {
           classData["Tên lớp"],
           affectedStudentIds
         );
+
+        // ✅ Xử lý học bù: Cập nhật trạng thái ở buổi học gốc (Lớp chính)
+        const makeupStudents = attendanceRecords.filter(r => r["Loại"] === "Học bù" && r["Có mặt"] === true && r["OriginalSessionID"]);
+        if (makeupStudents.length > 0) {
+          console.log(`🔄 Đang xử lý hoàn thành học bù cho ${makeupStudents.length} học sinh...`);
+          for (const studentRecord of makeupStudents) {
+            const originalSessionId = studentRecord["OriginalSessionID"];
+            const studentId = studentRecord["Student ID"];
+
+            try {
+              const originalSessionData = await supabaseGetById("datasheet/Điểm_danh_sessions", originalSessionId);
+              if (originalSessionData) {
+                // supabaseGetById already converts the data, so we don't need to call convertFromSupabaseFormat again
+                const convertedOriginal = originalSessionData;
+                const originalAttendance = Array.isArray(convertedOriginal["Điểm danh"])
+                  ? convertedOriginal["Điểm danh"]
+                  : Object.values(convertedOriginal["Điểm danh"] || {});
+
+                console.log(`🔍 Original attendance records count: ${originalAttendance.length}`);
+
+                let foundStudent = false;
+                const updatedOriginalAttendance = originalAttendance.map((r: any) => {
+                  const rId = r["Student ID"] || r["Mã học sinh"];
+                  if (rId === studentId) {
+                    foundStudent = true;
+                    return {
+                      ...r,
+                      "Có mặt": true, // Tích có mặt cho lớp chính như yêu cầu
+                      "Vắng có phép": false,
+                      "Đã hoàn thành bù": true,
+                      "Ghi chú": `${r["Ghi chú"] || ""}\n(Đã học bù tại lớp ${classData["Tên lớp"]} ngày ${dayjs(sessionDate).format("DD/MM/YYYY")})`.trim()
+                    };
+                  }
+                  return r;
+                });
+
+                if (foundStudent) {
+                  await supabaseUpdate("datasheet/Điểm_danh_sessions", originalSessionId, {
+                    "Điểm danh": updatedOriginalAttendance
+                  });
+                  console.log(`✅ Đã đồng bộ trạng thái về buổi học gốc ${originalSessionId}`);
+                  message.info(`Đã đồng bộ điểm danh bù cho ${studentRecord["Tên học sinh"] || studentId}`);
+                } else {
+                  console.warn(`⚠️ Không tìm thấy học sinh ${studentId} trong buổi học gốc ${originalSessionId}`);
+                }
+              }
+            } catch (err) {
+              console.error(`❌ Lỗi đồng bộ bù:`, err);
+            }
+          }
+        }
       } else {
         console.warn("[InvoiceSync] sessionDate is invalid, skipped invoice sync", sessionDate);
       }
@@ -1877,7 +2038,7 @@ const AttendanceSessionPage = () => {
 
       Modal.success({
         title: "Hoàn thành điểm danh",
-        content: "Buổi học đã được lưu thành công!",
+        content: "Buổi học và dữ liệu đồng bộ đã được lưu thành công!",
         onOk: () => navigate("/workspace/attendance"),
       });
     } catch (error) {
@@ -1906,16 +2067,32 @@ const AttendanceSessionPage = () => {
       title: "Họ và tên",
       dataIndex: "Họ và tên",
       key: "name",
-      render: (_: any, record: Student) => (
-        <div>
-          <div>{record["Họ và tên"]}</div>
-          {(record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]) && (
-            <div style={{ fontSize: "11px", color: "#666" }}>
-              📞 {record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]}
-            </div>
-          )}
-        </div>
-      ),
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(r => r["Student ID"] === record.id);
+        const isMakeup = attendanceRecord?.["Loại"] === "Học bù";
+        return (
+          <div>
+            <Space>
+              <span style={{ fontWeight: isMakeup ? 600 : 400 }}>{record["Họ và tên"]}</span>
+              {isMakeup && (
+                <Space size={4}>
+                  <Tag color="volcano">Học bù</Tag>
+                  {attendanceRecord?.["OriginalClassName"] && (
+                    <Tag color="orange" style={{ fontSize: "10px" }}>
+                      Lớp: {attendanceRecord["OriginalClassName"]}
+                    </Tag>
+                  )}
+                </Space>
+              )}
+            </Space>
+            {(record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]) && (
+              <div style={{ fontSize: "11px", color: "#666" }}>
+                📞 {record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       title: "Có mặt",
@@ -1945,7 +2122,7 @@ const AttendanceSessionPage = () => {
           (r) => r["Student ID"] === record.id
         );
         if (!attendanceRecord?.["Có mặt"]) return "-";
-        
+
         // When in edit mode, show clickable tag to open modal
         if (isEditingMode && !isReadOnly) {
           return (
@@ -1965,10 +2142,10 @@ const AttendanceSessionPage = () => {
             </Button>
           );
         }
-        
+
         return attendanceRecord?.["Giờ check-in"] ? (
-          <Tag 
-            icon={<LoginOutlined />} 
+          <Tag
+            icon={<LoginOutlined />}
             color="success"
             style={{ cursor: isReadOnly ? "default" : "pointer" }}
             onClick={() => !isReadOnly && handleOpenTimeModal(record.id, "Giờ check-in", attendanceRecord["Giờ check-in"] || "")}
@@ -1989,15 +2166,13 @@ const AttendanceSessionPage = () => {
           (r) => r["Student ID"] === record.id
         );
         if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
-        
+
         // When in edit mode, show clickable tag to open modal
         if (isEditingMode && !isReadOnly) {
           return (
-            <Button
-              type="text"
-              size="small"
+            <span
               onClick={() => handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
-              style={{ padding: 0 }}
+              style={{ cursor: "pointer", display: "inline-block" }}
             >
               {attendanceRecord?.["Giờ check-out"] ? (
                 <Tag icon={<LogoutOutlined />} color="warning" style={{ cursor: "pointer" }}>
@@ -2012,14 +2187,14 @@ const AttendanceSessionPage = () => {
                   Check-out
                 </Button>
               )}
-            </Button>
+            </span>
           );
         }
-        
+
         if (attendanceRecord?.["Giờ check-out"]) {
           return (
-            <Tag 
-              icon={<LogoutOutlined />} 
+            <Tag
+              icon={<LogoutOutlined />}
               color="warning"
               style={{ cursor: isReadOnly ? "default" : "pointer" }}
               onClick={() => !isReadOnly && handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
@@ -2028,7 +2203,7 @@ const AttendanceSessionPage = () => {
             </Tag>
           );
         }
-        
+
         return (
           <Button
             size="small"
@@ -2059,6 +2234,31 @@ const AttendanceSessionPage = () => {
           />
         );
       },
+    },
+    {
+      title: "Thao tác",
+      key: "action",
+      width: 100,
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(r => r["Student ID"] === record.id);
+        const isMakeup = attendanceRecord?.["Loại"] === "Học bù";
+        
+        if (isMakeup && !isReadOnly) {
+          return (
+            <Popconfirm
+              title="Xóa học sinh bù"
+              description="Bạn có muốn xóa học sinh này khỏi buổi học bù không? Trạng thái vắng ở lớp cũ sẽ được khôi phục."
+              onConfirm={() => handleRemoveMakeupStudent(record.id)}
+              okText="Xóa"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+            >
+              <Button type="text" danger icon={<DeleteOutlined />} size="small">Xóa</Button>
+            </Popconfirm>
+          );
+        }
+        return null;
+      }
     },
   ];
 
@@ -2108,7 +2308,7 @@ const AttendanceSessionPage = () => {
           (r) => r["Student ID"] === record.id
         );
         if (!attendanceRecord?.["Có mặt"]) return "-";
-        
+
         // When in edit mode, show clickable tag to open modal
         if (isEditingMode && !isReadOnly) {
           return (
@@ -2128,7 +2328,7 @@ const AttendanceSessionPage = () => {
             </Button>
           );
         }
-        
+
         return attendanceRecord?.["Giờ check-in"] ? (
           <Tag icon={<LoginOutlined />} color="success" style={{ fontSize: "11px" }}>
             {attendanceRecord["Giờ check-in"]}
@@ -2147,15 +2347,13 @@ const AttendanceSessionPage = () => {
           (r) => r["Student ID"] === record.id
         );
         if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
-        
+
         // When in edit mode, show clickable tag to open modal
         if (isEditingMode && !isReadOnly) {
           return (
-            <Button
-              type="text"
-              size="small"
+            <span
               onClick={() => handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
-              style={{ padding: 0 }}
+              style={{ cursor: "pointer", display: "inline-block" }}
             >
               {attendanceRecord?.["Giờ check-out"] ? (
                 <Tag icon={<LogoutOutlined />} color="warning" style={{ fontSize: "11px", cursor: "pointer" }}>
@@ -2171,10 +2369,10 @@ const AttendanceSessionPage = () => {
                   Check-out
                 </Button>
               )}
-            </Button>
+            </span>
           );
         }
-        
+
         if (attendanceRecord?.["Giờ check-out"]) {
           return (
             <Tag icon={<LogoutOutlined />} color="warning" style={{ fontSize: "11px" }}>
@@ -2182,7 +2380,7 @@ const AttendanceSessionPage = () => {
             </Tag>
           );
         }
-        
+
         return (
           <Button
             size="small"
@@ -2285,8 +2483,8 @@ const AttendanceSessionPage = () => {
             <Input
               value={`/ ${total}`}
               disabled
-              style={{ 
-                width: "50%", 
+              style={{
+                width: "50%",
                 textAlign: "center",
                 backgroundColor: "#f5f5f5",
                 color: "#000"
@@ -2455,7 +2653,7 @@ const AttendanceSessionPage = () => {
       )}
 
       {/* Thông báo còn có thể sửa điểm danh */}
-      {existingSession && !isEditingMode && !isPassedEditDeadline && (
+      {existingSession && existingSession["Trạng thái"] === "completed" && !isEditingMode && !isPassedEditDeadline && (
         <Card
           style={{
             marginBottom: 16,
@@ -2559,7 +2757,7 @@ const AttendanceSessionPage = () => {
           <div>
             {/* Bug 9: Hiển thị bài tập buổi trước */}
             {previousHomework && (
-              <Card 
+              <Card
                 title={
                   <Space>
                     <FileOutlined />
@@ -2589,7 +2787,7 @@ const AttendanceSessionPage = () => {
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
-                              setTimeout(() => {}, 200);
+                              setTimeout(() => { }, 200);
                             });
                           }}
                         >
@@ -2612,7 +2810,7 @@ const AttendanceSessionPage = () => {
                           return name;
                         };
                         const shortName = getShortFileName(item.name);
-                        
+
                         return (
                           <List.Item>
                             <a href={item.url} target="_blank" rel="noopener noreferrer" title={item.name} download={item.name}>
@@ -2650,8 +2848,8 @@ const AttendanceSessionPage = () => {
                           showUploadList={false}
                           disabled={isReadOnly || uploadingLessonAttachment}
                         >
-                          <Button 
-                            icon={<UploadOutlined />} 
+                          <Button
+                            icon={<UploadOutlined />}
                             loading={uploadingLessonAttachment}
                             disabled={isReadOnly}
                             block
@@ -2659,7 +2857,7 @@ const AttendanceSessionPage = () => {
                             {uploadingLessonAttachment ? "Đang tải lên..." : "Tải lên tài liệu"}
                           </Button>
                         </Upload>
-                        
+
                         {lessonAttachments.length > 0 && (
                           <>
                             {lessonAttachments.length > 1 && (
@@ -2676,7 +2874,7 @@ const AttendanceSessionPage = () => {
                                     document.body.appendChild(link);
                                     link.click();
                                     document.body.removeChild(link);
-                                    setTimeout(() => {}, 200);
+                                    setTimeout(() => { }, 200);
                                   });
                                 }}
                                 style={{ marginBottom: 8 }}
@@ -2700,13 +2898,13 @@ const AttendanceSessionPage = () => {
                                   return name;
                                 };
                                 const shortName = getShortFileName(item.name);
-                                
+
                                 return (
                                   <List.Item
                                     actions={!isReadOnly ? [
-                                      <Button 
-                                        type="link" 
-                                        danger 
+                                      <Button
+                                        type="link"
+                                        danger
                                         size="small"
                                         onClick={() => handleRemoveLessonAttachment(index)}
                                       >
@@ -2715,9 +2913,9 @@ const AttendanceSessionPage = () => {
                                     ] : []}
                                   >
                                     <Space>
-                                      <a 
-                                        href={item.url} 
-                                        target="_blank" 
+                                      <a
+                                        href={item.url}
+                                        target="_blank"
                                         rel="noopener noreferrer"
                                         download={item.name}
                                         title={item.name}
@@ -2777,8 +2975,8 @@ const AttendanceSessionPage = () => {
                           showUploadList={false}
                           disabled={isReadOnly || uploadingAttachment}
                         >
-                          <Button 
-                            icon={<UploadOutlined />} 
+                          <Button
+                            icon={<UploadOutlined />}
                             loading={uploadingAttachment}
                             disabled={isReadOnly}
                             block
@@ -2786,7 +2984,7 @@ const AttendanceSessionPage = () => {
                             {uploadingAttachment ? "Đang tải lên..." : "Tải lên tài liệu BTVN"}
                           </Button>
                         </Upload>
-                        
+
                         {homeworkAttachments.length > 0 && (
                           <>
                             {homeworkAttachments.length > 1 && (
@@ -2804,7 +3002,7 @@ const AttendanceSessionPage = () => {
                                     link.click();
                                     document.body.removeChild(link);
                                     // Delay để tránh browser block multiple downloads
-                                    setTimeout(() => {}, 200);
+                                    setTimeout(() => { }, 200);
                                   });
                                 }}
                                 style={{ marginBottom: 8 }}
@@ -2831,13 +3029,13 @@ const AttendanceSessionPage = () => {
                                   return name;
                                 };
                                 const shortName = getShortFileName(item.name);
-                                
+
                                 return (
                                   <List.Item
                                     actions={!isReadOnly ? [
-                                      <Button 
-                                        type="link" 
-                                        danger 
+                                      <Button
+                                        type="link"
+                                        danger
                                         size="small"
                                         onClick={() => handleRemoveAttachment(index)}
                                       >
@@ -2846,9 +3044,9 @@ const AttendanceSessionPage = () => {
                                     ] : []}
                                   >
                                     <Space>
-                                      <a 
-                                        href={item.url} 
-                                        target="_blank" 
+                                      <a
+                                        href={item.url}
+                                        target="_blank"
                                         rel="noopener noreferrer"
                                         download={item.name}
                                         title={item.name}
@@ -2878,9 +3076,9 @@ const AttendanceSessionPage = () => {
               </Col>
             </Row>
 
-            <Card 
-              title="Bài kiểm tra chung" 
-              size="small" 
+            <Card
+              title="Bài kiểm tra chung"
+              size="small"
               style={{ marginBottom: 16, background: "#f0f5ff" }}
             >
               <Space direction="vertical" style={{ width: "100%" }}>
@@ -2921,7 +3119,7 @@ const AttendanceSessionPage = () => {
                   }
                   setCurrentStep(0);
                 }}>Quay lại</Button>
-                {existingSession && !isEditingMode && !isPassedEditDeadline && (
+                {existingSession && existingSession["Trạng thái"] === "completed" && !isEditingMode && !isPassedEditDeadline && (
                   <Button
                     type="default"
                     icon={<EditOutlined />}
@@ -2939,7 +3137,7 @@ const AttendanceSessionPage = () => {
                   >
                     Cập nhật điểm danh
                   </Button>
-                ) : !existingSession ? (
+                ) : (!existingSession || existingSession["Trạng thái"] === "not_started") ? (
                   <Button
                     type="primary"
                     icon={<CheckOutlined />}
@@ -3044,7 +3242,7 @@ const AttendanceSessionPage = () => {
               title: "Thời gian",
               key: "time",
               width: 150,
-              render: (_: any, record: any) => 
+              render: (_: any, record: any) =>
                 dayjs(record["Thời gian đổi"] || record["Timestamp"]).format("HH:mm:ss"),
             },
             {

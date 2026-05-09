@@ -4,6 +4,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import type { ScheduleEvent } from "../../types";
 import { DATABASE_URL_BASE } from "@/firebase";
 import { supabaseAdmin } from "@/supabase";
+import { uploadToCloudinary } from "@/utils/cloudinaryStorage";
 import { supabaseGetAll, supabaseGetById, supabaseSet, supabaseRemove, supabaseOnValue, convertFromSupabaseFormat, convertToSupabaseFormat } from "@/utils/supabaseHelpers";
 import {
   Button,
@@ -28,6 +29,12 @@ import {
   Tabs,
   Divider,
   Radio,
+  List,
+  Avatar,
+  Checkbox,
+  Tooltip,
+  Upload,
+  Image,
 } from "antd";
 import type { MenuProps } from "antd";
 import {
@@ -43,7 +50,9 @@ import {
   FileTextOutlined,
   DollarOutlined,
   StarOutlined,
+  StarFilled,
   SyncOutlined,
+  PhoneOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import WrapperContent from "@/components/WrapperContent";
@@ -57,43 +66,202 @@ import { subjectMap, subjectOptions, studentGradeOptions } from "@/utils/selectO
 const { TabPane } = Tabs;
 const { Text } = Typography;
 
-// Component for editable stars input
-const StarsInput: React.FC<{
-  value: number;
-  student: Student;
-  onSave: (newValue: number) => void;
-}> = ({ value, student, onSave }) => {
-  const [localValue, setLocalValue] = useState<number>(value);
-
-  useEffect(() => {
-    setLocalValue(value);
-  }, [value]);
-
-  const handleBlur = () => {
-    if (localValue !== value && localValue !== null && localValue !== undefined) {
-      onSave(localValue);
-    }
-  };
+// Component for a single student card
+const StudentCard: React.FC<{
+  student: any;
+  isSelected: boolean;
+  onSelect: (id: string, checked: boolean) => void;
+  onView: (student: any) => void;
+  onEdit: (student: any) => void;
+  onDelete: (student: any) => void;
+  onReport: (student: any) => void;
+  onStarsChange: (student: any, newValue: number) => void;
+  getStudentClasses: (id: string) => any[];
+  handleShowClasses: (id: string, name: string) => void;
+}> = ({
+  student,
+  isSelected,
+  onSelect,
+  onView,
+  onEdit,
+  onDelete,
+  onReport,
+  onStarsChange,
+  getStudentClasses,
+  handleShowClasses
+}) => {
+  const classes = getStudentClasses(student.id);
+  const uniqueSubjects = Array.from(new Set(classes.map(c => c.subject)));
 
   return (
-    <InputNumber
-      min={0}
-      step={1}
-      value={localValue}
-      onChange={(newValue) => {
-        if (newValue !== null && newValue !== undefined) {
-          setLocalValue(newValue);
-        }
+    <Card
+      hoverable
+      className="student-card-horizontal"
+      style={{
+        borderRadius: "12px",
+        overflow: "hidden",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+        transition: "all 0.3s ease",
+        marginBottom: "12px",
+        border: "1px solid #f0f0f0",
+        background: "#fff"
       }}
-      onBlur={handleBlur}
-      onPressEnter={(e) => {
-        e.currentTarget.blur();
-      }}
-      addonAfter="⭐"
-      style={{ width: "100%" }}
-      onFocus={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    />
+      bodyStyle={{ padding: "12px 16px" }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        {/* Left: Avatar & Checkbox */}
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <Checkbox
+            checked={isSelected}
+            onChange={(e) => onSelect(student.id, e.target.checked)}
+            style={{
+              position: "absolute",
+              top: "-8px",
+              left: "-8px",
+              zIndex: 2,
+              scale: "1.1"
+            }}
+          />
+          {(student["Ảnh"] || student.avatar_url) ? (
+            <Image
+              width={70}
+              height={70}
+              src={student["Ảnh"] || student.avatar_url}
+              style={{
+                borderRadius: "8px",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                backgroundColor: "#f0f2f5",
+                objectFit: "cover",
+                cursor: "pointer"
+              }}
+            />
+          ) : (
+            <Avatar
+              shape="square"
+              size={70}
+              icon={<UserOutlined />}
+              style={{
+                borderRadius: "8px",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+                backgroundColor: "#f0f2f5"
+              }}
+            />
+          )}
+        </div>
+
+        {/* Center: Info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "4px" }}>
+            <Typography.Title
+              level={5}
+              style={{
+                margin: 0,
+                fontStyle: "italic",
+                color: "#1f2937",
+                fontSize: "1.05rem",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis"
+              }}
+            >
+              {student["Họ và tên"]}
+            </Typography.Title>
+            <div style={{ display: "flex", alignItems: "center", gap: "4px", color: "#faad14" }}>
+              <StarFilled style={{ fontSize: "14px" }} />
+              <span style={{ fontWeight: "bold", fontSize: "14px" }}>{student.totalStars || 0}</span>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: "6px", display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            <Tag color="blue" style={{ borderRadius: "4px", fontSize: "11px", margin: 0, padding: "0 8px" }}>
+              {student["Mã học sinh"] || "N/A"}
+            </Tag>
+            <Tag color="cyan" style={{ borderRadius: "4px", fontSize: "11px", margin: 0, padding: "0 8px" }}>
+              Khối: {student["Khối"] || "-"}
+            </Tag>
+          </div>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", fontSize: "12px", color: "#6b7280" }}>
+            <span>Môn: 
+              <b 
+                style={{ 
+                  color: "#36797f", 
+                  marginLeft: "4px",
+                  cursor: uniqueSubjects.length > 0 ? "pointer" : "default", 
+                  textDecoration: uniqueSubjects.length > 0 ? "underline" : "none" 
+                }}
+                onClick={() => uniqueSubjects.length > 0 && handleShowClasses(student.id, student["Họ và tên"])}
+              >
+                {uniqueSubjects.length}
+              </b>
+            </span>
+            <span>Buổi: <b style={{ color: "#36797f", marginLeft: "4px" }}>{student.totalSessions || 0}</b></span>
+            <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <PhoneOutlined style={{ fontSize: "11px" }} />
+              {student["Số điện thoại"] || "N/A"}
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Stars Adjustment & Actions */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "10px", minWidth: "140px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "12px", color: "#9ca3af" }}>Sửa sao:</span>
+            <InputNumber
+              size="small"
+              value={student.totalStars || 0}
+              onChange={(newValue) => onStarsChange(student, newValue || 0)}
+              min={0}
+              max={100}
+              style={{ width: "55px", borderRadius: "4px" }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+            <Tooltip title="Xem chi tiết">
+              <EyeOutlined
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onView(student);
+                }}
+                style={{ color: "#36797f", fontSize: "18px", cursor: "pointer" }}
+              />
+            </Tooltip>
+            <Tooltip title="Chỉnh sửa">
+              <EditOutlined
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(student);
+                }}
+                style={{ color: "#fa8c16", fontSize: "18px", cursor: "pointer" }}
+              />
+            </Tooltip>
+            <Tooltip title="Báo cáo">
+              <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center" }}>
+                <StudentReportButton
+                  student={student}
+                  type="text"
+                  size="small"
+                  iconOnly
+                />
+              </div>
+            </Tooltip>
+            <Popconfirm
+              title="Xóa học sinh"
+              description={`Bạn có chắc muốn xóa "${student["Họ và tên"]}"?`}
+              onConfirm={() => onDelete(student)}
+              okText="Xóa"
+              cancelText="Hủy"
+              okButtonProps={{ danger: true }}
+            >
+              <Tooltip title="Xóa">
+                <DeleteOutlined style={{ color: "#ff4d4f", fontSize: "18px", cursor: "pointer" }} />
+              </Tooltip>
+            </Popconfirm>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 };
 
@@ -506,6 +674,14 @@ const StudentListView: React.FC = () => {
         registeredSubjects: enrolledClassIds,
         // Set enrollment date from existing data (if any)
         enrollmentDate: existingEnrollmentDate ? dayjs(existingEnrollmentDate) : null,
+        avatar: (editingStudent["Ảnh"] || editingStudent.avatar_url) ? [
+          {
+            uid: '-1',
+            name: 'avatar.png',
+            status: 'done',
+            url: editingStudent["Ảnh"] || editingStudent.avatar_url,
+          }
+        ] : [],
       });
     } else if (!editingStudent && isEditModalOpen) {
       // Reset form when adding new student
@@ -2749,200 +2925,68 @@ const StudentListView: React.FC = () => {
           </Row>
         </Card>
 
-        {/* Students Table */}
+        {/* Students Card List */}
         {loading ? (
-          <div className="flex h-full items-center justify-center">
+          <div className="flex h-full items-center justify-center py-20">
             <Loader />
           </div>
         ) : (
-          <Card>
-            <Table
-              dataSource={displayStudents.map((student, index) => ({
-                key: student.id,
-                index: index + 1,
-                name: student["Họ và tên"],
-                grade: student["Khối"] || "-",
-                code: student["Mã học sinh"] || "-",
-                phone: student["Số điện thoại"] || "-",
-                parentPhone: student["SĐT phụ huynh"] || "-",
-                hours: `${student.hours}h ${student.minutes} p`,
-                hoursExtended: `${student.hoursExtended || 0} h`,
-                hoursRemaining: `${student.hoursRemaining ? student.hoursRemaining.toFixed(2) : "0.00"} h`,
-                sessions: student.totalSessions,
-                totalStars: student.totalStars || 0,
-                student,
-              }))}
-              columns={[
-                {
-                  title: "#",
-                  dataIndex: "index",
-                  key: "index",
-                  width: 60,
-                  align: "center",
-                  fixed: "left",
-                },
-                {
-                  title: "Họ và tên",
-                  dataIndex: "name",
-                  fixed: "left",
-                  key: "name",
-                  render: (text) => <strong>{text}</strong>,
-                },
-                {
-                  title: "Khối",
-                  dataIndex: "grade",
-                  key: "grade",
-                  width: 100,
-                  render: (text) => text || "-",
-                },
-                {
-                  title: "Mã học sinh",
-                  dataIndex: "code",
-                  key: "code",
-                  width: 120,
-                },
-                {
-                  title: "SĐT HS",
-                  dataIndex: "phone",
-                  key: "phone",
-                  width: 120,
-                },
-                {
-                  title: "SĐT phụ huynh",
-                  dataIndex: "parentPhone",
-                  key: "parentPhone",
-                  width: 120,
-                },
-                {
-                  title: "Môn đăng ký",
-                  dataIndex: "sessions",
-                  key: "sessions",
-                  align: "center",
-                  render: (sessions, record) => {
-                    const classes = getStudentClasses(record.student.id);
-                    if (classes.length === 0) {
-                      return <Tag>Chưa đăng ký</Tag>;
-                    }
-                    // Get unique subjects
-                    const uniqueSubjects = Array.from(new Set(classes.map(c => c.subject)));
-                    return (
-                      <Space size={4} wrap>
-                        {uniqueSubjects.map((subject, index) => (
-                          <Tag
-                            key={index}
-                            color="purple"
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => handleShowClasses(record.student.id, record.name)}
-                          >
-                            {subject}
-                          </Tag>
-                        ))}
-                      </Space>
-                    );
-                  },
-                },
-                {
-                  title: "Số sao thưởng",
-                  dataIndex: "totalStars",
-                  key: "totalStars",
-                  align: "center",
-                  width: 150,
-                  render: (stars, record) => (
-                    <StarsInput
-                      value={stars || 0}
-                      student={record.student}
-                      onSave={(newValue) => handleDirectStarsChange(record.student, newValue)}
-                    />
-                  ),
-                },
-                {
-                  title: "Cài đặt",
-                  key: "actions",
-                  align: "center",
-                  fixed: "right",
-                  width: 150,
-                  render: (_, record) => (
-                    <Space size={4}>
-                      <Dropdown
-                        menu={{
-                          items: [
-                            {
-                              key: "view",
-                              label: "Xem chi tiết",
-                              icon: <EyeOutlined />,
-                              onClick: () => handleStudentClick(record.student),
-                            },
-                            {
-                              type: "divider",
-                            },
-                            {
-                              key: "edit",
-                              label: "Chỉnh sửa",
-                              icon: <EditOutlined />,
-                              onClick: () => {
-                                // Create a synthetic event to satisfy the function signature
-                                const syntheticEvent = {
-                                  stopPropagation: () => { },
-                                } as React.MouseEvent;
-                                handleEditStudent(syntheticEvent, record.student);
-                              },
-                            },
-                          ],
-                        }}
-                        trigger={["click"]}
-                      >
-                        <Button
-                          type="text"
-                          icon={<MoreOutlined />}
-                          size="small"
-                        />
-                      </Dropdown>
-                      <Popconfirm
-                        title="Xóa học sinh"
-                        description={`Bạn có chắc chắn muốn xóa học sinh "${record.student["Họ và tên"]}" không ? `}
-                        onConfirm={(e) => {
-                          const syntheticEvent = {
-                            stopPropagation: () => { },
-                          } as React.MouseEvent;
-                          handleDeleteStudent(syntheticEvent, record.student);
-                        }}
-                        okText="Xóa"
-                        cancelText="Hủy"
-                        okButtonProps={{ danger: true }}
-                      >
-                        <Button
-                          type="text"
-                          danger
-                          icon={<DeleteOutlined />}
-                          size="small"
-                        />
-                      </Popconfirm>
-                      <StudentReportButton
-                        student={record.student}
-                        type="link"
-                        size="small"
-                        initialMonth={selectedMonth}
-                      />
-                    </Space>
-                  ),
-                },
-              ]}
-              rowSelection={{
-                selectedRowKeys,
-                onChange: setSelectedRowKeys,
-                getCheckboxProps: (record) => ({
-                  name: record.student.id,
-                }),
+          <div style={{ padding: "0 4px" }}>
+            <List
+              grid={{
+                gutter: 24,
+                xs: 1,
+                sm: 1,
+                md: 2,
+                lg: 2,
+                xl: 2,
+                xxl: 3,
               }}
+              dataSource={displayStudents}
               pagination={{
-                pageSize: 10,
+                pageSize: 12,
                 showSizeChanger: true,
-                pageSizeOptions: ['10', '20', '50', '100'],
-                showTotal: (total, range) => `${range[0]}-${range[1]} của ${total} học sinh`,
+                pageSizeOptions: ["12", "24", "48", "96"],
+                showTotal: (total, range) =>
+                  `${range[0]}-${range[1]} của ${total} học sinh`,
+                style: { textAlign: "center", marginTop: "32px" },
               }}
-              scroll={{ x: 1200 }}
+              renderItem={(student) => (
+                <List.Item style={{ marginBottom: "24px" }}>
+                  <StudentCard
+                    student={student}
+                    isSelected={selectedRowKeys.includes(student.id)}
+                    onSelect={(id, checked) => {
+                      if (checked) {
+                        setSelectedRowKeys([...selectedRowKeys, id]);
+                      } else {
+                        setSelectedRowKeys(
+                          selectedRowKeys.filter((key) => key !== id)
+                        );
+                      }
+                    }}
+                    onView={handleStudentClick}
+                    onEdit={(student) => {
+                      const syntheticEvent = {
+                        stopPropagation: () => {},
+                      } as React.MouseEvent;
+                      handleEditStudent(syntheticEvent, student);
+                    }}
+                    onDelete={(student) => {
+                      const syntheticEvent = {
+                        stopPropagation: () => {},
+                      } as React.MouseEvent;
+                      handleDeleteStudent(syntheticEvent, student);
+                    }}
+                    onReport={() => {}} // Report button is inside StudentCard
+                    onStarsChange={handleDirectStarsChange}
+                    getStudentClasses={getStudentClasses}
+                    handleShowClasses={handleShowClasses}
+                  />
+                </List.Item>
+              )}
             />
-          </Card>
+          </div>
         )}
 
         {/* Student Detail Modal */}
@@ -2950,6 +2994,13 @@ const StudentListView: React.FC = () => {
           title={
             selectedStudent ? (
               <div className="flex items-center gap-4">
+                <Image 
+                  width={64} 
+                  height={64}
+                  src={selectedStudent["Ảnh"] || selectedStudent.avatar_url} 
+                  fallback="https://via.placeholder.com/64?text=No+Image"
+                  style={{ borderRadius: '8px', objectFit: 'cover' }}
+                />
                 <div>
                   <h2 className="text-xl font-bold text-primary">
                     {selectedStudent["Họ và tên"]}
@@ -3748,6 +3799,32 @@ const StudentListView: React.FC = () => {
                 "Khối": values.grade || "",
                 "Môn học đăng ký": values.registeredSubjects || [],
               };
+
+              // Handle Avatar Upload
+              let avatarUrl = editingStudent?.["Ảnh"] || editingStudent?.avatar_url || "";
+              if (values.avatar && values.avatar.length > 0) {
+                const fileItem = values.avatar[0];
+                if (fileItem.originFileObj) {
+                  // This is a new file that needs to be uploaded
+                  message.loading({ content: "Đang tải ảnh lên...", key: "uploading" });
+                  const uploadResult = await uploadToCloudinary(fileItem.originFileObj, `student-avatars/${studentCode}`);
+                  if (uploadResult.success) {
+                    avatarUrl = uploadResult.url || "";
+                    message.success({ content: "Tải ảnh thành công!", key: "uploading" });
+                  } else {
+                    message.error({ content: "Lỗi khi tải ảnh: " + uploadResult.error, key: "uploading" });
+                  }
+                } else if (fileItem.url) {
+                  // This is an existing file
+                  avatarUrl = fileItem.url;
+                }
+              } else {
+                // Avatar was cleared
+                avatarUrl = "";
+              }
+
+              // Add avatar to student data
+              (studentData as any)["Ảnh"] = avatarUrl;
               // Preserve the ID if editing an existing student
               if (editingStudent?.id) {
                 studentData.id = editingStudent.id;
@@ -3769,6 +3846,31 @@ const StudentListView: React.FC = () => {
                   rules={[{ required: true, message: "Vui lòng nhập họ và tên" }]}
                 >
                   <Input placeholder="Nhập họ và tên" />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item
+                  label="Ảnh học sinh"
+                  name="avatar"
+                  valuePropName="fileList"
+                  getValueFromEvent={(e) => {
+                    if (Array.isArray(e)) {
+                      return e;
+                    }
+                    return e?.fileList;
+                  }}
+                >
+                  <Upload
+                    maxCount={1}
+                    accept="image/*"
+                    beforeUpload={() => false}
+                    listType="picture-card"
+                  >
+                    <div>
+                      <PlusOutlined />
+                      <div style={{ marginTop: 8 }}>Tải ảnh</div>
+                    </div>
+                  </Upload>
                 </Form.Item>
               </Col>
               <Col span={8}>

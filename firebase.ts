@@ -4,8 +4,7 @@ import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth"
 import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
 
-// Firebase config từ environment variables (.env.local)
-// Vite sẽ thay thế import.meta.env.VITE_* tại build time
+// Firebase configuration with safety checks
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -18,23 +17,36 @@ const firebaseConfig = {
 };
 
 // Export DATABASE_URL từ config (dùng cho scripts và REST API calls)
-export const DATABASE_URL_BASE = firebaseConfig.databaseURL;
+export const DATABASE_URL_BASE = firebaseConfig.databaseURL || "";
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase safely
+let app: any = null;
+let auth: any = null;
+let database: any = null;
+let storage: any = null;
 
-// Initialize Firebase Authentication and get a reference to the service
-export const auth = getAuth(app);
+try {
+  // Only initialize if API Key is present and valid
+  if (firebaseConfig.apiKey && firebaseConfig.apiKey !== "undefined") {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    database = getDatabase(app);
+    storage = getStorage(app);
+    
+    // Set persistence only if auth is initialized
+    if (auth) {
+      setPersistence(auth, browserLocalPersistence).catch((err) => {
+        console.warn("Firebase persistence error:", err);
+      });
+    }
+  } else {
+    console.warn("⚠️ Firebase API Key missing. Firebase services will be unavailable.");
+  }
+} catch (error) {
+  console.error("❌ Failed to initialize Firebase:", error);
+}
 
-// Set auth persistence to local storage (persist across browser sessions)
-setPersistence(auth, browserLocalPersistence).catch((error) => {
-  console.warn("⚠️ Failed to set Firebase auth persistence:", error);
-});
-
-export const database = getDatabase(app);
-export const storage = getStorage(app);
-
-// Export app as both named and default for flexibility
-export { app };
+// Export initialized or mock services
+export { auth, database, storage, app };
 export default app;
 

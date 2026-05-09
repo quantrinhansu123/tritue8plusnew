@@ -45,11 +45,29 @@ export const uploadToCloudinary = async (
     if (folder) {
       formData.append("folder", folder);
     }
+    
+    // For RAW files (PDF, docs...), we should preserve the filename and extension
+    // by passing it as the public_id or using a specific flag
+    const isImage = file.type.startsWith("image/");
+    if (!isImage) {
+      // Use original filename (sanitized) to ensure the extension is preserved in the URL
+      const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const parts = file.name.split('.');
+      const extension = parts.length > 1 ? parts.pop() : "";
+      
+      // Cloudinary RAW files NEED the extension in the public_id to be served correctly
+      const fileNameWithoutExt = sanitizedName.substring(0, sanitizedName.lastIndexOf('.')) || sanitizedName;
+      formData.append("public_id", `${fileNameWithoutExt}_${Math.random().toString(36).substring(7)}${extension ? '.' + extension : ''}`);
+    }
+
+    // Determine resource type (image, video, or raw)
+    // PDFs should be uploaded as 'raw' to avoid delivery restrictions applied to 'image' types
+    const resourceType = isImage ? "image" : "raw";
 
     // Upload to Cloudinary
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`;
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`;
     
-    console.log("📤 Uploading to Cloudinary:", {
+    console.log(`📤 Uploading to Cloudinary (${resourceType}):`, {
       cloudName: CLOUDINARY_CLOUD_NAME,
       preset: CLOUDINARY_UPLOAD_PRESET,
       fileName: file.name,
@@ -187,6 +205,17 @@ export const getCloudinaryUrl = (
   const transform = transformations.length > 0 ? `${transformations.join(",")}/` : "";
   
   return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/image/upload/${transform}${publicId}`;
+};
+
+/**
+ * Get Cloudinary URL - Reverted to original URL to avoid 401 security errors
+ * @param url - Original Cloudinary URL
+ * @returns Original URL
+ */
+export const getCloudinaryDownloadUrl = (url: string): string => {
+  // We return original URL because fl_attachment might trigger 401 errors
+  // depending on Cloudinary account security settings.
+  return url;
 };
 
 // Export configuration for debugging
